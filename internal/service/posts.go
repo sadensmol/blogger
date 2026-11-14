@@ -26,6 +26,20 @@ func (p *Posts) Create(ctx context.Context, post domain.Post) (domain.PostID, er
 	return id, nil
 }
 
+func (p *Posts) SetMessage(ctx context.Context, id domain.PostID, channelID, ts string) error {
+	if err := p.repo.SetMessage(ctx, id, channelID, ts, p.now()); err != nil {
+		return fmt.Errorf("cannot save the message of post %d: %w", id, err)
+	}
+	return nil
+}
+
+func (p *Posts) Delete(ctx context.Context, id domain.PostID) error {
+	if err := p.repo.Delete(ctx, id); err != nil {
+		return fmt.Errorf("cannot remove post %d: %w", id, err)
+	}
+	return nil
+}
+
 func (p *Posts) FindByMessage(ctx context.Context, channelID, ts string) (domain.Post, error) {
 	post, err := p.repo.FindByMessage(ctx, channelID, ts)
 	if err != nil {

@@ -33,13 +33,31 @@ func (r *Post) Create(ctx context.Context, p domain.Post, now time.Time) (domain
 INSERT INTO post (article_id, run_id, channel_id, message_ts, description, topics, reason, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id`,
-		p.ArticleID, p.RunID, p.ChannelID, p.MessageTS, p.Pick.Description, string(topicsJSON), p.Pick.Reason,
-		formatTime(now), formatTime(now),
+		p.ArticleID, p.RunID,
+		sql.NullString{String: p.ChannelID, Valid: p.ChannelID != ""}, sql.NullString{String: p.MessageTS, Valid: p.MessageTS != ""},
+		p.Pick.Description, string(topicsJSON), p.Pick.Reason, formatTime(now), formatTime(now),
 	).Scan(&id)
 	if err != nil {
 		return 0, fmt.Errorf("cannot create post of article %d: %w", p.ArticleID, err)
 	}
 	return domain.PostID(id), nil
+}
+
+func (r *Post) SetMessage(ctx context.Context, id domain.PostID, channelID, ts string, now time.Time) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE post SET channel_id = ?, message_ts = ?, updated_at = ? WHERE id = ?`,
+		channelID, ts, formatTime(now), id)
+	if err != nil {
+		return fmt.Errorf("cannot set message %s %s of post %d: %w", channelID, ts, id, err)
+	}
+	return requireAffected(result, fmt.Sprintf("post %d", id))
+}
+
+func (r *Post) Delete(ctx context.Context, id domain.PostID) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM post WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("cannot delete post %d: %w", id, err)
+	}
+	return requireAffected(result, fmt.Sprintf("post %d", id))
 }
 
 type postRow struct {

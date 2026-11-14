@@ -9,9 +9,20 @@ import (
 	"sync"
 )
 
+type PostFault int
+
+const (
+	PostOK PostFault = iota
+	PostRejected // slack answers ok:false and posts nothing
+	PostDropped  // slack posts the message, then the connection drops before the answer
+)
+
 type FakeSlack struct {
 	URL        string
 	FailMethod string
+
+	// PostFaults answers the chat.postMessage calls in order; calls past the list succeed
+	PostFaults []PostFault
 
 	// a call to BlockMethod runs OnBlock, then waits until the client gives up
 	BlockMethod string
@@ -23,6 +34,7 @@ type FakeSlack struct {
 	reactions []string
 	replies   []string
 	counter   int
+	postCalls int
 }
 
 func NewFakeSlack() *FakeSlack {
@@ -68,9 +80,27 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	switch method {
 	case "chat.postMessage":
+		fault := PostOK
+		if f.postCalls < len(f.PostFaults) {
+			fault = f.PostFaults[f.postCalls]
+		}
+		f.postCalls++
+		if fault == PostRejected {
+			fmt.Fprint(w, `{"ok":false,"error":"channel_not_found"}`)
+			return
+		}
 		f.counter++
 		f.posted = append(f.posted, r.PostForm.Get("text"))
-		_, _ = fmt.Fprintf(w, `{"ok":true,"channel":"C1","ts":"%d.000100"}`, f.counter)
+		if fault == PostDropped {
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			conn.Close()
+			return
+		}
+		fmt.Fprintf(w, `{"ok":true,"channel":"C1","ts":"%d.000100"}`, f.counter)
 	case "reactions.add":
 		f.reactions = append(f.reactions, fmt.Sprintf("%s:%s", r.PostForm.Get("timestamp"), r.PostForm.Get("name")))
 		_, _ = w.Write([]byte(`{"ok":true}`))

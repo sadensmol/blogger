@@ -24,3 +24,9 @@ RETURNING id`,
 		articleID, runID, fmt.Sprintf("ts-%d", articleID), now.Format(time.RFC3339), now.Format(time.RFC3339)).Scan(&id)
 	return id, err
 }
+
+func (r *Post) CountWithoutMessage(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM post WHERE message_ts IS NULL`).Scan(&n)
+	return n, err
+}

@@ -66,6 +66,14 @@ func (p *Poster) Pick(ctx context.Context, a domain.Article, pk domain.Pick) (st
 	return ts, channel, nil
 }
 
+// NotPosted reports whether slack answered a post with a clear rejection, so the message is surely not in the channel.
+// A transport error or a timeout is not one: slack may have posted the message before the answer got lost.
+func NotPosted(err error) bool {
+	var apiErr slack.SlackErrorResponse
+	var rateErr *slack.RateLimitedError
+	return errors.As(err, &apiErr) || errors.As(err, &rateErr)
+}
+
 func (p *Poster) Reply(ctx context.Context, responseURL, text string) error {
 	msg := &slack.WebhookMessage{ResponseType: slack.ResponseTypeEphemeral, Text: text}
 	if err := slack.PostWebhookCustomHTTPContext(ctx, responseURL, p.http, msg); err != nil {

@@ -151,6 +151,12 @@ func (s *DigestTestSuite) pickCandidates() []string {
 	return urls
 }
 
+func (s *DigestTestSuite) postsWithoutMessage() int {
+	n, err := s.posts.CountWithoutMessage(s.Ctx)
+	s.Require().NoError(err)
+	return n
+}
+
 func (s *DigestTestSuite) latestRun(kind domain.RunKind) testsrepository.RunResult {
 	result, err := s.runs.LatestByKind(s.Ctx, string(kind))
 	s.Require().NoError(err)
@@ -172,6 +178,7 @@ func (s *DigestTestSuite) TestMorningDigestPostsHeaderAndPicks() {
 	s.Contains(posted[2], s.articleURL("b"))
 	s.Len(s.slack.Reactions(), 4)
 	s.Equal(2, s.CountRows("post"))
+	s.Equal(0, s.postsWithoutMessage())
 	s.Equal(testsrepository.RunResult{Status: string(domain.RunStatusOK), Backend: string(llm.Claude)},
 		s.latestRun(domain.RunKindDigestMorning))
 }
@@ -393,4 +400,36 @@ func (s *DigestTestSuite) TestCancelWhileAddingReactionsStillStoresPost() {
 
 	s.Require().NoError(err)
 	s.Equal(1, s.CountRows("post"))
+}
+
+func (s *DigestTestSuite) TestLostSlackAnswerNeverRepostsArticle() {
+	s.addBlog("a", "b")
+	s.learnedProfile()
+	s.answerPicks("a")
+	s.slack.PostFaults = []tests.PostFault{tests.PostOK, tests.PostDropped}
+	s.Require().Error(s.digest.Run(s.Ctx, domain.RunKindDigestShow))
+	s.answerPicks("b")
+
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	s.Equal([]string{s.articleURL("b")}, s.pickCandidates())
+	s.Len(s.slack.Posted(), 4)
+	s.Equal(1, s.postsWithoutMessage())
+}
+
+func (s *DigestTestSuite) TestRejectedPickCanBePickedAgain() {
+	s.addBlog("a", "b")
+	s.learnedProfile()
+	s.answerPicks("a")
+	s.slack.PostFaults = []tests.PostFault{tests.PostOK, tests.PostRejected}
+	s.Require().Error(s.digest.Run(s.Ctx, domain.RunKindDigestShow))
+	s.Equal(0, s.CountRows("post"))
+
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	s.Contains(s.pickCandidates(), s.articleURL("a"))
+	s.Equal(1, s.CountRows("post"))
+	s.Equal(0, s.postsWithoutMessage())
 }
