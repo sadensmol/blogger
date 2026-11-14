@@ -1,0 +1,29 @@
+name: blogger
+services:
+  blogger:
+    image: ghcr.io/sadensmol/blogger:${BLOGGER_IMAGE_TAG:-latest}
+    container_name: blogger
+    restart: unless-stopped
+    env_file: [settings.env, .env]
+    mem_limit: 1536m
+    stop_grace_period: 30s
+    volumes:
+      - blogger-data:/data
+      - ./codex:/home/blogger/.codex
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  ollama:
+    profiles: [local]
+    image: ollama/ollama:latest
+    runtime: nvidia
+    restart: unless-stopped
+    environment:
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_KEEP_ALIVE: "5m"
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes: [ollama-models:/root/.ollama]
+volumes:
+  blogger-data:
+  ollama-models:

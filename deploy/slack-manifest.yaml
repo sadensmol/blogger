@@ -1,0 +1,18 @@
+display_information:
+  name: Blogger
+  description: Daily blog picks for one reader
+features:
+  bot_user: {display_name: blogger, always_online: true}
+  slash_commands:
+    - {command: /show, description: Pick articles now, should_escape: false}
+    - command: /blogs
+      description: Manage the blog list
+      usage_hint: "list | add <url> | remove <id|url> | pause <id|url> | resume <id|url>"
+      should_escape: false
+oauth_config:
+  scopes:
+    bot: [chat:write, commands, reactions:read, reactions:write]
+settings:
+  event_subscriptions:
+    bot_events: [reaction_added, reaction_removed]
+  socket_mode_enabled: true

@@ -1,0 +1,12 @@
+.git
+.scratch
+.superpowers
+.claude
+deploy
+bin
+.env
+**/.env
+*.env
+**/*.env
+auth.json
+**/auth.json
