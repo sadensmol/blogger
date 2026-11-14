@@ -9,10 +9,10 @@ This skill is the only way the user changes the `## My notes` part of the intere
 
 ## Where the commands run
 
-**Board (default).** The bot runs in the `blogger` container on `lockbox@lockbox-nv.local`. Run each board command in the tables below through SSH with the watchdog options:
+**Board (default).** The bot runs in the `blogger` container on the board `<user>@<board-host>`. Take the real address from `BLOGGER_BOARD_HOST`, else from `~/.config/blogger/board-host` (`cat` it; it is not a secret), else ask the user. Run each board command in the tables below through SSH with the watchdog options:
 
 ```bash
-ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local '<board command>'
+ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 <user>@<board-host> '<board command>'
 ```
 
 **Local test mode.** When the user says they work locally, run the same `blogger` arguments on the Mac, from the repo root, with `go run ./cmd/blogger` and the dev env file. Source the env file in a subshell, then set the same data and agent folders as `make run-local`. Never print the env file:
@@ -45,14 +45,14 @@ To replace the full list:
 3. Run a dry run. The `< file` redirect stays outside the ssh quotes, so it runs on the Mac:
 
    ```bash
-   ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 300 docker exec -i blogger blogger sources import -' < .scratch/sources.yaml
+   ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 <user>@<board-host> 'timeout 300 docker exec -i blogger blogger sources import -' < .scratch/sources.yaml
    ```
 
 4. Show the user the change lines (`+ add`, `- remove`, `~ change`). Ask for a yes.
 5. Only after the user's yes, run it again with `--apply`:
 
    ```bash
-   ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 300 docker exec -i blogger blogger sources import --apply -' < .scratch/sources.yaml
+   ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 <user>@<board-host> 'timeout 300 docker exec -i blogger blogger sources import --apply -' < .scratch/sources.yaml
    ```
 
 ## Interests and notes
@@ -60,7 +60,7 @@ To replace the full list:
 Show the interests:
 
 ```bash
-ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 20 docker exec blogger blogger profile show'
+ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 <user>@<board-host> 'timeout 20 docker exec blogger blogger profile show'
 ```
 
 It prints the whole interests file, or `No interests file yet.`
@@ -73,7 +73,7 @@ To change the notes:
 4. Only after the user's yes, send the notes. The `< file` redirect stays outside the ssh quotes:
 
    ```bash
-   ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 20 docker exec -i blogger blogger profile set-notes -' < .scratch/notes.md
+   ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 <user>@<board-host> 'timeout 20 docker exec -i blogger blogger profile set-notes -' < .scratch/notes.md
    ```
 
    It prints `Notes saved.`

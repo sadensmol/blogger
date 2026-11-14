@@ -5,7 +5,7 @@ This guide lists every manual step for one concrete setup: a Mac for local tests
 ## 1. Overview
 
 - **Mac, local test mode.** You run the real bot on the Mac. It uses a separate dev Slack app and the channel `#news-dev`. Use it to test and debug.
-- **Board.** The Jetson `lockbox-nv` runs the bot in one Docker container. It uses the production Slack app and the channel `#news`.
+- **Board.** A Jetson board, `<user>@<board-host>`, runs the bot in one Docker container. Its SSH address comes from `BLOGGER_BOARD_HOST`, or from `~/.config/blogger/board-host` on the Mac (one line, outside the repo). It uses the production Slack app and the channel `#news`.
 - **Images.** `make deploy-local` builds an image on the Mac and installs it on the board. CI builds the same image (section 6).
 - **Secrets.** Secrets live in `~/.config/blogger/` on the Mac and in `~/blogger/.env` and `~/blogger/codex/` on the board. They never enter the repo.
 
@@ -58,7 +58,7 @@ Make the Slack app for the board like section 2, with these changes. Use `deploy
    - Do not use this Codex home on the Mac again. The board owns this login and renews it.
 6. Check the key names only: `cut -d= -f1 ~/.config/blogger/secrets.env | sort`. Expect `CLAUDE_CODE_OAUTH_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID` and `SLACK_OWNER_USER_ID`. Check: `test -s ~/.config/blogger/codex/auth.json && echo present`.
 
-Then Claude Code copies the files to the board without printing them. `B` means `ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local`. For reference:
+Then Claude Code copies the files to the board without printing them. `B` means `ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 <user>@<board-host>`. For reference:
 
 ```bash
 B 'timeout 10 sh -c "mkdir -p ~/blogger/codex && chmod 700 ~/blogger ~/blogger/codex"'
@@ -72,7 +72,7 @@ The last check must show `700 1000 …/codex` and `600 1000 …/auth.json`. In t
 
 ## 5. Deploying to the board manually
 
-The board changes only through Docker images. The deploy scripts reach the board as `BLOGGER_BOARD_HOST`; set it to `<user>@<board-host>` for another board.
+The board changes only through Docker images. The deploy scripts reach the board as `BLOGGER_BOARD_HOST` (`<user>@<board-host>`) and stop when it is not set. `make` reads it from `~/.config/blogger/board-host` when the variable is unset.
 
 1. `make deploy-local` builds the image on the Mac for `linux/arm64`. It sends the image to the board over SSH. It pins the board to the tag `local-<sha>`. Use it for a change that CI has not built yet.
 2. `make deploy-ci` points the board back at the CI images (`:latest`) and starts them.
@@ -102,7 +102,7 @@ CI uses only the built-in `GITHUB_TOKEN`. It needs no other secret.
 5. Claude logs the board in to ghcr.io. The token goes through stdin and is never printed:
 
    ```bash
-   B 'timeout 30 docker login ghcr.io -u sadensmol --password-stdin' < ~/.config/blogger/ghcr-token
+   B 'timeout 30 docker login ghcr.io -u <github-user> --password-stdin' < ~/.config/blogger/ghcr-token
    B 'timeout 10 sh -c "grep -c \"ghcr.io\" ~/.docker/config.json; grep -c credsStore ~/.docker/config.json"'
    ```
 
@@ -127,14 +127,14 @@ The updater pulls with the board user's ghcr.io login. It mounts `~/.docker` rea
 ### See what runs on the board
 
 ```sh
-ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 20 sh -c "cat ~/blogger/image.tag; docker inspect -f {{.Config.Image}} blogger; docker logs --tail 20 blogger-updater"'
+ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 <user>@<board-host> 'timeout 20 sh -c "cat ~/blogger/image.tag; docker inspect -f {{.Config.Image}} blogger; docker logs --tail 20 blogger-updater"'
 ```
 
 The `blogger` log also prints the build tag (`sha-<short sha>` or `local-<sha>`) at start.
 
 ## 7. Troubleshooting
 
-- **Logs.** Run `ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 20 docker logs --tail 100 blogger'`.
+- **Logs.** Run `ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 <user>@<board-host> 'timeout 20 docker logs --tail 100 blogger'`.
 - **Wrong board clock.** While the board date is before 2026-01-01, the bot waits. It does no fetch and posts no digest. It logs `board clock is wrong`. Run `ssh … 'timeout 10 timedatectl show -p NTP -p NTPSynchronized -p Timezone'`. Expect `NTP=yes` and `NTPSynchronized=yes`.
 - **"Busy right now".** One agent job runs at a time. Wait for the running job to finish, then try again.
 - **`make run-local` fails with `invalid_auth`.** A Slack token in `dev.env` is wrong. Check the app-level token (`xapp-`) and the bot token (`xoxb-`).

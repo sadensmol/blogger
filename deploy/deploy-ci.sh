@@ -4,7 +4,7 @@
 # Never reads, prints or copies a secret.
 set -euo pipefail
 
-HOST="${BLOGGER_BOARD_HOST:-lockbox@lockbox-nv.local}"
+HOST="${BLOGGER_BOARD_HOST:?set BLOGGER_BOARD_HOST to <user>@<board-host>; make reads it from ~/.config/blogger/board-host when unset (README, section 6)}"
 cd "$(dirname "$0")/.."
 
 board() {

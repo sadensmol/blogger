@@ -37,9 +37,9 @@ with 👍 or 👎. The ratings change what the bot picks next time. The bot gets
 
 ## Constraints
 
-- Host: Jetson Orin Nano 8 GB, hostname `lockbox-nv`, L4T R39 rev 2.1 (JetPack 7.2), aarch64.
+- Host: Jetson Orin Nano 8 GB, `<board-host>`, L4T R39 rev 2.1 (JetPack 7.2), aarch64.
   About 5.7 GiB RAM is free. 374 GB free disk.
-- The memoresse lockbox stack is stopped and does not start at boot (`lockbox-stack.service`
+- The board's earlier stack is stopped and does not start at boot (its systemd service
   disabled, containers set to `restart=no`). Blogger has the board to itself.
 - One LLM job runs at a time. The app queues jobs (morning digest, `/show`, profile update,
   discovery) and runs them one by one.

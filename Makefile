@@ -11,6 +11,11 @@ endef
 
 TAG ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
 
+# The deploy scripts reach the board as BLOGGER_BOARD_HOST (<user>@<board-host>).
+# Unset, it comes from a file outside the repo.
+BLOGGER_BOARD_HOST ?= $(shell cat "$(HOME)/.config/blogger/board-host" 2>/dev/null)
+export BLOGGER_BOARD_HOST
+
 .PHONY: build test test-live image deploy-local deploy-ci secret-scan run-local debug-local
 
 build:
