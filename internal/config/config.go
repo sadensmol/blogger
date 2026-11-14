@@ -1,7 +1,9 @@
 package config
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -45,5 +47,24 @@ func LoadServe() (Serve, error) {
 	if err := env.Parse(&cfg); err != nil {
 		return Serve{}, fmt.Errorf("cannot load serve config: %w", err)
 	}
+	if err := cfg.validate(); err != nil {
+		return Serve{}, fmt.Errorf("cannot use serve config: %w", err)
+	}
 	return cfg, nil
+}
+
+// validate checks what env parsing cannot; an empty value already gets the default, a blank one does not.
+// Serve checks BLOGGER_TIME_ZONE and BLOGGER_DIGEST_TIME when it parses them.
+func (s Serve) validate() error {
+	switch {
+	case s.JobTimeout <= 0:
+		return fmt.Errorf("BLOGGER_JOB_TIMEOUT must be above zero, got %s", s.JobTimeout)
+	case s.DigestSize <= 0:
+		return fmt.Errorf("BLOGGER_DIGEST_SIZE must be above zero, got %d", s.DigestSize)
+	case strings.TrimSpace(s.ClaudeBin) == "":
+		return errors.New("BLOGGER_CLAUDE_BIN must not be empty")
+	case strings.TrimSpace(s.CodexBin) == "":
+		return errors.New("BLOGGER_CODEX_BIN must not be empty")
+	}
+	return nil
 }

@@ -40,3 +40,24 @@ func TestLoadServeWithoutBotTokenFails(t *testing.T) {
 
 	require.ErrorContains(t, err, "SLACK_BOT_TOKEN")
 }
+
+func TestLoadServeWithBadValuesFails(t *testing.T) {
+	tests := []struct {
+		name, key, value string
+	}{
+		{name: "zero job timeout", key: "BLOGGER_JOB_TIMEOUT", value: "0s"},
+		{name: "zero digest size", key: "BLOGGER_DIGEST_SIZE", value: "0"},
+		{name: "blank claude binary", key: "BLOGGER_CLAUDE_BIN", value: " "},
+		{name: "blank codex binary", key: "BLOGGER_CODEX_BIN", value: " "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setSlackEnv(t)
+			t.Setenv(tt.key, tt.value)
+
+			_, err := config.LoadServe()
+
+			require.ErrorContains(t, err, tt.key)
+		})
+	}
+}
