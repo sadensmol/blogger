@@ -84,3 +84,15 @@ JOIN article a ON a.id = p.article_id
 WHERE a.source_id = ? AND r.vote = -1 AND r.removed_at IS NULL`, id).Scan(&n)
 	return n, err
 }
+
+type SourceDetail struct {
+	Status string
+	Origin string
+	Reason string
+}
+
+func (r *Source) Detail(ctx context.Context, feedURL string) (SourceDetail, error) {
+	var d SourceDetail
+	err := r.db.QueryRowContext(ctx, `SELECT status, origin, reason FROM source WHERE feed_url = ?`, feedURL).Scan(&d.Status, &d.Origin, &d.Reason)
+	return d, err
+}
