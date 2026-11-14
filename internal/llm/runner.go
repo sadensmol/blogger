@@ -50,6 +50,9 @@ func (r *Runner) run(ctx context.Context, req jobRequest, accept func(answer []b
 	}
 
 	for _, backend := range r.backends {
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("%s job stopped: %w", job.Skill, err)
+		}
 		if !backend.Supports(job) {
 			continue
 		}

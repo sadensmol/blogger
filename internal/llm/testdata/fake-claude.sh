@@ -7,7 +7,11 @@ touch "$HOME/claude.lock"
 printf '%s\n' "$*" >> "$HOME/claude.args"
 env | cut -d= -f1 | sort > "$HOME/claude.env"
 cp "$in" "$HOME/claude.$skill.input"
-[ -f "$HOME/claude.sleep" ] && sleep "$(cat "$HOME/claude.sleep")"
+if [ -f "$HOME/claude.sleep" ]; then
+	sleep "$(cat "$HOME/claude.sleep")" &
+	echo $! > "$HOME/claude.sleep.pid"
+	wait $!
+fi
 rm -f "$HOME/claude.lock"
 cat "$HOME/claude.$skill.stdout"
 exit "$(cat "$HOME/claude.exit" 2>/dev/null || echo 0)"

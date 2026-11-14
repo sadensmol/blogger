@@ -3,10 +3,13 @@ package llm_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -219,6 +222,10 @@ func TestFallsBackOnTimeout(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, llm.Codex, backend)
 	require.Less(t, time.Since(start), 4*time.Second)
+	sleepPID, err := strconv.Atoi(strings.TrimSpace(f.read("claude.sleep.pid")))
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return errors.Is(syscall.Kill(sleepPID, 0), syscall.ESRCH) },
+		2*time.Second, 20*time.Millisecond, "the agent's child process outlived the timeout")
 }
 
 func TestAllBackendsFailReturnsErrAllBackendsFailed(t *testing.T) {
