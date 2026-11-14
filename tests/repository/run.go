@@ -29,3 +29,15 @@ func (r *Run) Status(ctx context.Context, id int64) (string, error) {
 	err := r.db.QueryRowContext(ctx, `SELECT status FROM run WHERE id = ?`, id).Scan(&status)
 	return status, err
 }
+
+type RunResult struct {
+	Status  string
+	Backend string
+}
+
+func (r *Run) LatestByKind(ctx context.Context, kind string) (RunResult, error) {
+	var result RunResult
+	err := r.db.QueryRowContext(ctx, `SELECT status, backend FROM run WHERE kind = ? ORDER BY id DESC LIMIT 1`, kind).
+		Scan(&result.Status, &result.Backend)
+	return result, err
+}
