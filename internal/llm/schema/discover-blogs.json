@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["blogs"],
+  "properties": {
+    "blogs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["site_url", "feed_url", "title", "reason"],
+        "properties": {
+          "site_url": {"type": "string"},
+          "feed_url": {"type": "string"},
+          "title": {"type": "string"},
+          "reason": {"type": "string"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["interests_md"],
+  "properties": {
+    "interests_md": {"type": "string"}
+  }
+}
