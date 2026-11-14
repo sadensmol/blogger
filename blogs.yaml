@@ -33,5 +33,16 @@ sources:
   - url: https://www.gruntwork.io/blog
     title: Gruntwork blog
 
+  - url: https://jvns.ca/
+    feed: https://jvns.ca/atom.xml
+  - url: https://research.swtch.com/
+    feed: https://research.swtch.com/feed.atom
+  - url: https://lethain.com/
+    feed: https://lethain.com/feeds
+  - url: https://fasterthanli.me/
+    feed: https://fasterthanli.me/index.xml
+  - url: https://blog.cloudflare.com/
+    feed: https://blog.cloudflare.com/rss
+
 # Same feed as https://stripe.dev/blog (https://stripe.dev/blog/feed), so not listed twice:
 #   https://stripe.dev/blog/topic/engineering
