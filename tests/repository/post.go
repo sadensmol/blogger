@@ -33,17 +33,22 @@ func (r *Post) CountWithoutMessage(ctx context.Context) (int, error) {
 
 type PostRow struct {
 	ArticleID, RunID int64
-	MessageTS        string
+	MessageTS        string // empty: reserved, slack's answer never stored
 	Now              time.Time
 }
 
 func (r *Post) InsertMessage(ctx context.Context, row PostRow) (int64, error) {
+	var channelID, messageTS sql.NullString
+	if row.MessageTS != "" {
+		channelID = sql.NullString{String: "C1", Valid: true}
+		messageTS = sql.NullString{String: row.MessageTS, Valid: true}
+	}
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
 INSERT INTO post (article_id, run_id, channel_id, message_ts, description, created_at, updated_at)
-VALUES (?, ?, 'C1', ?, 'description', ?, ?)
+VALUES (?, ?, ?, ?, 'description', ?, ?)
 RETURNING id`,
-		row.ArticleID, row.RunID, row.MessageTS, row.Now.Format(time.RFC3339), row.Now.Format(time.RFC3339)).Scan(&id)
+		row.ArticleID, row.RunID, channelID, messageTS, row.Now.Format(time.RFC3339), row.Now.Format(time.RFC3339)).Scan(&id)
 	return id, err
 }
 

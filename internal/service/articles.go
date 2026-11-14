@@ -138,11 +138,8 @@ func (a *Articles) Backfill(ctx context.Context) (int, error) {
 
 // Candidates takes the not posted articles and the unvoted ones due again of the last two weeks.
 func (a *Articles) Candidates(ctx context.Context) ([]domain.Article, error) {
-	articles, err := a.repo.ListNotVotedOfActiveOrTrialPublishedAfter(ctx, repository.NotVotedFilter{
-		PublishedAfter:   a.now().Add(-min(candidateWindow, a.history)),
-		LastPostedBefore: a.now().Add(-a.repeatAfter),
-		MaxPosts:         a.repeatMax,
-	})
+	articles, err := a.repo.ListNotVotedPostedFewerThanLastBeforeOfActiveOrTrialPublishedAfter(ctx,
+		a.repeatMax, a.now().Add(-a.repeatAfter), a.now().Add(-min(candidateWindow, a.history)))
 	if err != nil {
 		return nil, fmt.Errorf("cannot list candidates: %w", err)
 	}
@@ -152,11 +149,8 @@ func (a *Articles) Candidates(ctx context.Context) ([]domain.Article, error) {
 // CandidatesOverHistory takes the not posted articles and the unvoted ones due again of the whole history,
 // spread over time so older ones come up too. Undated articles come last.
 func (a *Articles) CandidatesOverHistory(ctx context.Context) ([]domain.Article, error) {
-	articles, err := a.repo.ListNotVotedOfActiveOrTrialPublishedAfterOrUndated(ctx, repository.NotVotedFilter{
-		PublishedAfter:   a.now().Add(-a.history),
-		LastPostedBefore: a.now().Add(-a.repeatAfter),
-		MaxPosts:         a.repeatMax,
-	})
+	articles, err := a.repo.ListNotVotedPostedFewerThanLastBeforeOfActiveOrTrialPublishedAfterOrUndated(ctx,
+		a.repeatMax, a.now().Add(-a.repeatAfter), a.now().Add(-a.history))
 	if err != nil {
 		return nil, fmt.Errorf("cannot list candidates over history: %w", err)
 	}

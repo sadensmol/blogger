@@ -91,8 +91,8 @@ func (r *Article) UpdateUndatedPublishedAt(ctx context.Context, u domain.URL, pu
 	return nil
 }
 
-const notVotedOfActiveOrTrialQueryFormat = `
-SELECT a.id, a.source_id, s.title, a.url, a.title, a.excerpt, a.published_at, COUNT(p.id)
+const notVotedPostedFewerThanLastBeforeOfActiveOrTrialQueryFormat = `
+SELECT a.id, a.source_id, s.title, a.url, a.title, a.excerpt, a.published_at, COUNT(p.message_ts)
 FROM article a
 JOIN source s ON s.id = a.source_id
 LEFT JOIN post p ON p.article_id = a.id
@@ -104,34 +104,49 @@ WHERE s.deleted_at IS NULL
     WHERE voted.article_id = a.id AND r.removed_at IS NULL
   )
 GROUP BY a.id
-HAVING COUNT(p.id) = 0 OR (COUNT(p.id) < ? AND MAX(p.created_at) <= ?)
+HAVING COUNT(p.id) = 0 OR (COUNT(p.message_ts) < ? AND MAX(p.created_at) <= ?)
 ORDER BY a.published_at IS NULL, a.published_at DESC, a.id DESC`
 
 var (
-	notVotedOfActiveOrTrialPublishedAfterQuery = fmt.Sprintf(notVotedOfActiveOrTrialQueryFormat,
-		"a.published_at > ?")
-	notVotedOfActiveOrTrialPublishedAfterOrUndatedQuery = fmt.Sprintf(notVotedOfActiveOrTrialQueryFormat,
-		"(a.published_at > ? OR a.published_at IS NULL)")
+	notVotedPostedFewerThanLastBeforeOfActiveOrTrialPublishedAfterQuery = fmt.Sprintf(
+		notVotedPostedFewerThanLastBeforeOfActiveOrTrialQueryFormat, "a.published_at > ?")
+	notVotedPostedFewerThanLastBeforeOfActiveOrTrialPublishedAfterOrUndatedQuery = fmt.Sprintf(
+		notVotedPostedFewerThanLastBeforeOfActiveOrTrialQueryFormat, "(a.published_at > ? OR a.published_at IS NULL)")
 )
 
-// NotVotedFilter always passes a never posted article; a posted one passes when it was posted fewer than MaxPosts times,
-// the last time before LastPostedBefore.
-type NotVotedFilter struct {
-	PublishedAfter   time.Time
-	LastPostedBefore time.Time
-	MaxPosts         int
+// ListNotVotedPostedFewerThanLastBeforeOfActiveOrTrialPublishedAfter counts only posts with a message as posted:
+// a post whose slack answer was lost is no show, but its time still holds the article back until lastPostedBefore.
+func (r *Article) ListNotVotedPostedFewerThanLastBeforeOfActiveOrTrialPublishedAfter(
+	ctx context.Context, postedFewerThan int, lastPostedBefore, publishedAfter time.Time,
+) ([]domain.Article, error) {
+	return r.listNotVoted(ctx, notVotedParams{
+		query:            notVotedPostedFewerThanLastBeforeOfActiveOrTrialPublishedAfterQuery,
+		postedFewerThan:  postedFewerThan,
+		lastPostedBefore: lastPostedBefore,
+		publishedAfter:   publishedAfter,
+	})
 }
 
-func (r *Article) ListNotVotedOfActiveOrTrialPublishedAfter(ctx context.Context, f NotVotedFilter) ([]domain.Article, error) {
-	return r.listNotVoted(ctx, notVotedOfActiveOrTrialPublishedAfterQuery, f)
+func (r *Article) ListNotVotedPostedFewerThanLastBeforeOfActiveOrTrialPublishedAfterOrUndated(
+	ctx context.Context, postedFewerThan int, lastPostedBefore, publishedAfter time.Time,
+) ([]domain.Article, error) {
+	return r.listNotVoted(ctx, notVotedParams{
+		query:            notVotedPostedFewerThanLastBeforeOfActiveOrTrialPublishedAfterOrUndatedQuery,
+		postedFewerThan:  postedFewerThan,
+		lastPostedBefore: lastPostedBefore,
+		publishedAfter:   publishedAfter,
+	})
 }
 
-func (r *Article) ListNotVotedOfActiveOrTrialPublishedAfterOrUndated(ctx context.Context, f NotVotedFilter) ([]domain.Article, error) {
-	return r.listNotVoted(ctx, notVotedOfActiveOrTrialPublishedAfterOrUndatedQuery, f)
+type notVotedParams struct {
+	query            string
+	postedFewerThan  int
+	lastPostedBefore time.Time
+	publishedAfter   time.Time
 }
 
-func (r *Article) listNotVoted(ctx context.Context, query string, f NotVotedFilter) ([]domain.Article, error) {
-	rows, err := r.db.QueryContext(ctx, query, formatTime(f.PublishedAfter), f.MaxPosts, formatTime(f.LastPostedBefore))
+func (r *Article) listNotVoted(ctx context.Context, p notVotedParams) ([]domain.Article, error) {
+	rows, err := r.db.QueryContext(ctx, p.query, formatTime(p.publishedAfter), p.postedFewerThan, formatTime(p.lastPostedBefore))
 	if err != nil {
 		return nil, fmt.Errorf("cannot query not voted articles: %w", err)
 	}

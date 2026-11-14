@@ -269,11 +269,8 @@ func (s *StoreTestSuite) TestListNotVotedSkipsPausedDeletedJustPostedAndOld() {
 	posted := s.insertArticle(active, "https://example.com/posted", now.Add(-otherArticleAge))
 	s.insertPost(posted, s.insertRun(domain.RunStatusOK))
 
-	articles, err := repository.NewArticle(s.DB).ListNotVotedOfActiveOrTrialPublishedAfter(s.Ctx, repository.NotVotedFilter{
-		PublishedAfter:   now.Add(-maxAge),
-		LastPostedBefore: now.Add(-tests.RepeatAfter),
-		MaxPosts:         tests.RepeatMax,
-	})
+	articles, err := repository.NewArticle(s.DB).ListNotVotedPostedFewerThanLastBeforeOfActiveOrTrialPublishedAfter(s.Ctx,
+		tests.RepeatMax, now.Add(-tests.RepeatAfter), now.Add(-maxAge))
 
 	s.Require().NoError(err)
 	urls := make([]domain.URL, 0, len(articles))

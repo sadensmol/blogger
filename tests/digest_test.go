@@ -717,6 +717,34 @@ func (s *DigestTestSuite) TestArticleComesBackUntilPostedThreeTimes() {
 	s.Equal(map[string]int{s.articleURL(twice): 2, s.articleURL(fresh): 0}, s.pickShown())
 }
 
+func (s *DigestTestSuite) insertReservedPostAgo(articleID int64, age time.Duration) {
+	runID, err := s.runs.Insert(s.Ctx, string(domain.RunKindDigestShow), string(domain.RunStatusOK), s.Clock.Now().Add(-age))
+	s.Require().NoError(err)
+	_, err = s.posts.InsertMessage(s.Ctx, testsrepository.PostRow{ArticleID: articleID, RunID: runID, Now: s.Clock.Now().Add(-age)})
+	s.Require().NoError(err)
+}
+
+func (s *DigestTestSuite) TestPostWithoutMessageIsNoShowButDelaysTheRepeat() {
+	const (
+		lostOld     = "lost-old"
+		lostRecent  = "lost-recent"
+		twiceAndLost = "twice-and-lost"
+	)
+	sourceID := s.addBlog()
+	s.learnedProfile()
+	s.insertReservedPostAgo(s.insertArticle(sourceID, lostOld, s.Clock.Now().Add(-time.Hour)), tests.RepeatAfter+time.Hour)
+	s.insertReservedPostAgo(s.insertArticle(sourceID, lostRecent, s.Clock.Now().Add(-time.Hour)), 2*24*time.Hour)
+	twiceID := s.insertArticle(sourceID, twiceAndLost, s.Clock.Now().Add(-time.Hour))
+	s.insertPostsAgo(twiceID, 3*tests.RepeatAfter, 2*tests.RepeatAfter)
+	s.insertReservedPostAgo(twiceID, tests.RepeatAfter+time.Hour)
+	s.answerPicks(lostOld)
+
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	s.Equal(map[string]int{s.articleURL(lostOld): 0, s.articleURL(twiceAndLost): 2}, s.pickShown())
+}
+
 func (s *DigestTestSuite) TestArticlePostedTwoDaysAgoWaits() {
 	sourceID := s.addBlog()
 	s.learnedProfile()
