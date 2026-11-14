@@ -77,7 +77,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 }
 
 func (s *Scheduler) submitMorning(ctx context.Context, local time.Time) {
-	last, err := s.d.Runs.LastStarted(ctx, domain.RunKindDigestMorning)
+	last, err := s.d.Runs.LastDigestStarted(ctx)
 	if err != nil {
 		log.Ctx(ctx).Error().Err(err).Msg("scheduler cannot check the morning digest")
 		return

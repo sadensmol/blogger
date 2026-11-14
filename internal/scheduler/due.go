@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-const catchUpWindow = 6 * time.Hour
-
 var clockFloor = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 type DailyTime struct{ Hour, Minute int }
@@ -23,13 +21,13 @@ func (d DailyTime) slot(now time.Time) time.Time {
 	return time.Date(now.Year(), now.Month(), now.Day(), d.Hour, d.Minute, 0, 0, now.Location())
 }
 
-// MorningDue expects now in the digest zone. Before today's slot, the slot is yesterday's, so the window crosses midnight.
+// MorningDue expects now in the digest zone. Before today's slot, the slot is yesterday's. last is the latest digest start of any kind.
 func MorningDue(now time.Time, at DailyTime, last time.Time) bool {
 	slot := at.slot(now)
 	if now.Before(slot) {
 		slot = at.slot(now.AddDate(0, 0, -1))
 	}
-	return now.Before(slot.Add(catchUpWindow)) && last.Before(slot)
+	return last.Before(slot)
 }
 
 func IntervalDue(now, last time.Time, every time.Duration) bool {

@@ -22,12 +22,14 @@ func TestMorningDue(t *testing.T) {
 		last time.Time
 		want bool
 	}{
-		{name: "before the slot", now: at1000.Add(-time.Minute), want: false},
+		{name: "before the slot after yesterday's run", now: at1000.Add(-time.Minute), last: yesterday, want: false},
 		{name: "at the slot with no run", now: at1000, want: true},
 		{name: "at the slot after yesterday's run", now: at1000, last: yesterday, want: true},
 		{name: "after today's run", now: at1000.Add(30 * time.Minute), last: at1000, want: false},
-		{name: "last minute of the catch-up window", now: at1000.Add(6*time.Hour - time.Minute), last: yesterday, want: true},
-		{name: "after the catch-up window", now: at1000.Add(6 * time.Hour), last: yesterday, want: false},
+		{name: "nine hours after the slot with no run", now: at1000.Add(9 * time.Hour), want: true},
+		{name: "nine hours after the slot with a show after the slot", now: at1000.Add(9 * time.Hour), last: at1000.Add(time.Hour), want: false},
+		{name: "boot at 09:00 with yesterday's digest missing", now: at1000.Add(-time.Hour), last: yesterday.Add(-time.Hour), want: true},
+		{name: "boot at 09:00 with yesterday's digest done", now: at1000.Add(-time.Hour), last: yesterday, want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -52,8 +54,7 @@ func TestMorningDueAcrossMidnight(t *testing.T) {
 		{name: "after midnight with no run", now: nextDay(1, 0), want: true},
 		{name: "after midnight with the slot's run", now: nextDay(1, 0), last: slot, want: false},
 		{name: "after midnight with the day before's run", now: nextDay(1, 0), last: slot.AddDate(0, 0, -1), want: true},
-		{name: "last minute of the window", now: nextDay(1, 59), want: true},
-		{name: "after the window", now: nextDay(2, 0), want: false},
+		{name: "late after midnight with no run", now: nextDay(19, 0), want: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

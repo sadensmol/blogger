@@ -56,6 +56,14 @@ func (r *Runs) LastStarted(ctx context.Context, kind domain.RunKind) (time.Time,
 	return startedAt, nil
 }
 
+func (r *Runs) LastDigestStarted(ctx context.Context) (time.Time, error) {
+	startedAt, err := r.repo.LastMorningOrShowStartedAt(ctx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("cannot read last digest run: %w", err)
+	}
+	return startedAt, nil
+}
+
 func (r *Runs) LastFinishedStarted(ctx context.Context, kind domain.RunKind) (time.Time, error) {
 	startedAt, err := r.repo.LastFinishedStartedAt(ctx, kind)
 	if err != nil {

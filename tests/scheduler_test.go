@@ -170,6 +170,28 @@ func (s *SchedulerTestSuite) TestTickAfterLateStartCatchesUp() {
 	s.Equal(1, s.headers())
 }
 
+func (s *SchedulerTestSuite) TestTickAtStartLateInTheDayPostsMissedDigest() {
+	s.Clock.Set(s.localTime(15, 0))
+
+	s.scheduler.Tick(s.Ctx)
+	s.waitForRun(domain.RunKindDigestMorning)
+
+	s.Equal(1, s.headers())
+}
+
+func (s *SchedulerTestSuite) TestTickAfterShowSinceTheSlotDoesNotPostMorningDigest() {
+	s.Clock.Set(s.localTime(11, 0))
+	_, err := s.runs.Insert(s.Ctx, string(domain.RunKindDigestShow), string(domain.RunStatusOK), s.Clock.Now())
+	s.Require().NoError(err)
+	s.Clock.Set(s.localTime(15, 0))
+
+	s.scheduler.Tick(s.Ctx)
+	s.scheduler.Wait()
+
+	s.Equal(0, s.morningRuns())
+	s.Equal(0, s.headers())
+}
+
 func (s *SchedulerTestSuite) TestTickWithWrongClockDoesNothing() {
 	s.Clock.Set(time.Date(1970, 1, 1, 10, 0, 0, 0, s.location))
 
