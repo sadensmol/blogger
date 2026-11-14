@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	migrationsCount = 9
+	migrationsCount = 10
 	feedURL         = "https://example.com/feed"
 	unknownSourceID = 999
 	userOne         = "U1"

@@ -55,3 +55,18 @@ func ParseURL(raw string) (URL, error) {
 
 	return URL(u.String()), nil
 }
+
+// WithOriginOf gives u the scheme and host of other: the same article under http or www is one url.
+func (u URL) WithOriginOf(other URL) URL {
+	target, err := url.Parse(string(u))
+	if err != nil {
+		return u
+	}
+	source, err := url.Parse(string(other))
+	if err != nil {
+		return u
+	}
+	target.Scheme = source.Scheme
+	target.Host = source.Host
+	return URL(target.String())
+}

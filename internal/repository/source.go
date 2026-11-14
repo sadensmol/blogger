@@ -25,7 +25,10 @@ type sourceRow struct {
 	status, origin    string
 	statusChangedAt   string
 	fetchedAt         sql.NullString
+	fetchFailedAt     sql.NullString
 	backfilledAt      sql.NullString
+	backfillTries     int
+	backfillTriedAt   sql.NullString
 	votesUp, votesDown int
 	sinceUp, sinceDown int
 }
@@ -45,7 +48,15 @@ func (r repositorySource) toDomain() (domain.Source, error) {
 	if err != nil {
 		return domain.Source{}, fmt.Errorf("cannot map source %d: %w", r.id, err)
 	}
+	fetchFailedAt, err := parseOptionalTime(r.fetchFailedAt)
+	if err != nil {
+		return domain.Source{}, fmt.Errorf("cannot map source %d: %w", r.id, err)
+	}
 	backfilledAt, err := parseOptionalTime(r.backfilledAt)
+	if err != nil {
+		return domain.Source{}, fmt.Errorf("cannot map source %d: %w", r.id, err)
+	}
+	backfillTriedAt, err := parseOptionalTime(r.backfillTriedAt)
 	if err != nil {
 		return domain.Source{}, fmt.Errorf("cannot map source %d: %w", r.id, err)
 	}
@@ -61,13 +72,16 @@ func (r repositorySource) toDomain() (domain.Source, error) {
 		Votes:            domain.Votes{Up: r.votesUp, Down: r.votesDown},
 		VotesSinceStatus: domain.Votes{Up: r.sinceUp, Down: r.sinceDown},
 		FetchedAt:        fetchedAt,
+		FetchFailedAt:    fetchFailedAt,
 		BackfilledAt:     backfilledAt,
+		BackfillTries:    r.backfillTries,
+		BackfillTriedAt:  backfillTriedAt,
 	}, nil
 }
 
 const sourceQueryFormat = `
 SELECT s.id, s.site_url, s.feed_url, s.title, s.reason, s.status, s.origin, s.status_changed_at,
-    s.fetched_at, s.backfilled_at,
+    s.fetched_at, s.fetch_failed_at, s.backfilled_at, s.backfill_tries, s.backfill_tried_at,
     COALESCE(SUM(r.vote = 1), 0),
     COALESCE(SUM(r.vote = -1), 0),
     COALESCE(SUM(r.vote = 1 AND r.updated_at >= s.status_changed_at), 0),
@@ -97,7 +111,8 @@ func (r *Source) list(ctx context.Context, query string, args ...any) ([]domain.
 	for rows.Next() {
 		var row sourceRow
 		if err := rows.Scan(&row.id, &row.siteURL, &row.feedURL, &row.title, &row.reason, &row.status, &row.origin,
-			&row.statusChangedAt, &row.fetchedAt, &row.backfilledAt, &row.votesUp, &row.votesDown, &row.sinceUp, &row.sinceDown); err != nil {
+			&row.statusChangedAt, &row.fetchedAt, &row.fetchFailedAt, &row.backfilledAt, &row.backfillTries, &row.backfillTriedAt,
+			&row.votesUp, &row.votesDown, &row.sinceUp, &row.sinceDown); err != nil {
 			return nil, fmt.Errorf("cannot scan source: %w", err)
 		}
 		source, err := repositorySource(row).toDomain()
@@ -172,12 +187,32 @@ func (r *Source) UpdateFetchedAt(ctx context.Context, id domain.SourceID, now ti
 	return requireAffected(result, fmt.Sprintf("source %d", id))
 }
 
+func (r *Source) UpdateFetchFailedAt(ctx context.Context, id domain.SourceID, now time.Time) error {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE source SET fetch_failed_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+		formatTime(now), formatTime(now), id)
+	if err != nil {
+		return fmt.Errorf("cannot set fetch failure time of source %d: %w", id, err)
+	}
+	return requireAffected(result, fmt.Sprintf("source %d", id))
+}
+
 func (r *Source) UpdateBackfilledAt(ctx context.Context, id domain.SourceID, now time.Time) error {
 	result, err := r.db.ExecContext(ctx,
 		`UPDATE source SET backfilled_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
 		formatTime(now), formatTime(now), id)
 	if err != nil {
 		return fmt.Errorf("cannot set backfill time of source %d: %w", id, err)
+	}
+	return requireAffected(result, fmt.Sprintf("source %d", id))
+}
+
+func (r *Source) IncBackfillTries(ctx context.Context, id domain.SourceID, now time.Time) error {
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE source SET backfill_tries = backfill_tries + 1, backfill_tried_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+		formatTime(now), formatTime(now), id)
+	if err != nil {
+		return fmt.Errorf("cannot count a backfill try of source %d: %w", id, err)
 	}
 	return requireAffected(result, fmt.Sprintf("source %d", id))
 }

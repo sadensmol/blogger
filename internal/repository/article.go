@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -65,6 +66,18 @@ func (r *Article) ExistsByURL(ctx context.Context, u domain.URL) (bool, error) {
 		return false, fmt.Errorf("cannot check article %s: %w", u, err)
 	}
 	return exists, nil
+}
+
+func (r *Article) FindLatestURLBySource(ctx context.Context, id domain.SourceID) (domain.URL, error) {
+	var u string
+	err := r.db.QueryRowContext(ctx, `SELECT url FROM article WHERE source_id = ? ORDER BY id DESC LIMIT 1`, id).Scan(&u)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("latest article of source %d: %w", id, domain.ErrNotFound)
+	}
+	if err != nil {
+		return "", fmt.Errorf("cannot find latest article of source %d: %w", id, err)
+	}
+	return domain.URL(u), nil
 }
 
 func (r *Article) UpdateUndatedPublishedAt(ctx context.Context, u domain.URL, publishedAt, now time.Time) error {

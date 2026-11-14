@@ -181,6 +181,38 @@ func (s *FetchTestSuite) TestFetchFeedsIfOlderThanIgnoresUnfinishedFetch() {
 	s.Equal(1, s.feeds.Requests(feedAPath))
 }
 
+func (s *FetchTestSuite) TestFetchFeedsIfOlderThanCountsItsOwnRunAsFresh() {
+	s.setFeed(feedAPath, s.feeds.URL()+"/one")
+	s.insertSource(feedAPath, domain.SourceActive)
+	s.Require().NoError(s.articles.FetchFeedsIfOlderThan(s.Ctx, time.Hour))
+	s.Clock.Advance(30 * time.Minute)
+
+	s.Require().NoError(s.articles.FetchFeedsIfOlderThan(s.Ctx, time.Hour))
+
+	s.Equal(1, s.feeds.Requests(feedAPath))
+	result, err := s.runs.LatestByKind(s.Ctx, string(domain.RunKindFetchFeeds))
+	s.Require().NoError(err)
+	s.Equal(string(domain.RunStatusOK), result.Status)
+	_, err = s.runs.LatestByKind(s.Ctx, string(domain.RunKindFetch))
+	s.Require().ErrorIs(err, sql.ErrNoRows)
+}
+
+func (s *FetchTestSuite) TestFailedFeedWaitsAnHour() {
+	s.insertSource(feedAPath, domain.SourceActive)
+
+	_, err := s.articles.FetchAll(s.Ctx)
+	s.Require().NoError(err)
+	s.Clock.Advance(59 * time.Minute)
+	_, err = s.articles.FetchAll(s.Ctx)
+	s.Require().NoError(err)
+	s.Equal(1, s.feeds.Requests(feedAPath))
+	s.Clock.Advance(2 * time.Minute)
+	_, err = s.articles.FetchAll(s.Ctx)
+	s.Require().NoError(err)
+
+	s.Equal(2, s.feeds.Requests(feedAPath))
+}
+
 func (s *FetchTestSuite) TestFetchFeedsIfOlderThanNeverBackfills() {
 	s.setFeed(feedAPath, s.feeds.URL()+"/one")
 	id := s.insertSource(feedAPath, domain.SourceActive)
@@ -251,13 +283,28 @@ func (s *FetchTestSuite) storedURLs(sourceID int64) []string {
 	return urls
 }
 
+func (s *FetchTestSuite) rawStoredURLs(sourceID int64) []string {
+	var urls []string
+	for _, a := range s.stored(sourceID) {
+		urls = append(urls, a.URL)
+	}
+	return urls
+}
+
+func (s *FetchTestSuite) fetchAndBackfill() {
+	_, err := s.articles.FetchAll(s.Ctx)
+	s.Require().NoError(err)
+	_, err = s.articles.Backfill(s.Ctx)
+	s.Require().NoError(err)
+}
+
 func (s *FetchTestSuite) requireBackfilled(sourceID int64) {
 	backfilledAt, err := s.sources.BackfilledAt(s.Ctx, sourceID)
 	s.Require().NoError(err)
 	s.True(backfilledAt.Valid)
 }
 
-func (s *FetchTestSuite) TestFetchAllBackfillsFromNestedSitemapsInsideTheWindow() {
+func (s *FetchTestSuite) TestBackfillsFromNestedSitemapsInsideTheWindow() {
 	s.setFeed(historyFeedPath, s.feeds.URL()+"/posts/recent")
 	id := s.insertBlog(historyFeedPath)
 	s.feeds.Set(sitemapPath, xmlType, fmt.Sprintf(sitemapIndexFmt,
@@ -268,6 +315,9 @@ func (s *FetchTestSuite) TestFetchAllBackfillsFromNestedSitemapsInsideTheWindow(
 		"/posts/plain", "2026-03-01T10:00:00+00:00",
 		"/posts/ancient", "2024-05-01",
 		"/tag/go", "2026-09-01",
+		"/category/go/page/2", "2026-09-01",
+		"/page/2", "2026-09-01",
+		"/notes/tag", "2026-02-01",
 		"/", "2026-11-01")
 	s.setSitemap(oldSitemapPath, "/posts/in-old-sitemap", "2026-09-01")
 	s.setPage("/posts/new", `<meta property="og:title" content="New &amp; shiny"><meta property="og:description" content="&lt;p&gt;About &lt;b&gt;Go&lt;/b&gt;.&lt;/p&gt;"><title>Ignored title</title>`)
@@ -275,38 +325,40 @@ func (s *FetchTestSuite) TestFetchAllBackfillsFromNestedSitemapsInsideTheWindow(
  post </title><meta name="description" content="Plain description.">`)
 	s.setPage("/posts/ancient", `<title>Ancient</title>`)
 	s.setPage("/tag/go", `<title>Tag</title>`)
+	s.setPage("/page/2", `<title>Page 2</title>`)
+	s.setPage("/notes/tag", `<title>A note about tags</title>`)
 
-	_, err := s.articles.FetchAll(s.Ctx)
+	s.fetchAndBackfill()
 
-	s.Require().NoError(err)
 	s.Equal([]testsrepository.StoredArticle{
 		{URL: s.feeds.URL() + "/posts/new", Title: "New & shiny", Excerpt: "About Go.", PublishedAt: sql.NullString{String: "2026-09-01T08:00:00Z", Valid: true}},
 		{URL: s.feeds.URL() + "/posts/plain", Title: "Plain post", Excerpt: "Plain description.", PublishedAt: sql.NullString{String: "2026-03-01T10:00:00Z", Valid: true}},
+		{URL: s.feeds.URL() + "/notes/tag", Title: "A note about tags", PublishedAt: sql.NullString{String: "2026-02-01T00:00:00Z", Valid: true}},
 		{URL: s.feeds.URL() + "/posts/recent", Title: "Item 0"},
 	}, s.stored(id))
 	s.Equal(0, s.feeds.Requests(oldSitemapPath))
 	s.Equal(0, s.feeds.Requests("/posts/ancient"))
 	s.Equal(0, s.feeds.Requests("/tag/go"))
+	s.Equal(0, s.feeds.Requests("/page/2"))
 	s.requireBackfilled(id)
 }
 
-func (s *FetchTestSuite) TestFetchAllBackfillsFromSitemapNamedInRobots() {
+func (s *FetchTestSuite) TestBackfillsFromSitemapNamedInRobots() {
 	s.setFeed(historyFeedPath)
 	id := s.insertBlog(historyFeedPath)
 	s.feeds.Set(robotsPath, textType, fmt.Sprintf("User-agent: *\nDisallow:\nSitemap: %s%s\n", s.feeds.URL(), customSitemapPath))
 	s.setSitemap(customSitemapPath, "/posts/one", "2026-08-01")
 	s.setPage("/posts/one", `<title>One</title><meta property="article:published_time" content="2026-07-30T09:00:00Z">`)
 
-	_, err := s.articles.FetchAll(s.Ctx)
+	s.fetchAndBackfill()
 
-	s.Require().NoError(err)
 	s.Equal([]testsrepository.StoredArticle{
 		{URL: s.feeds.URL() + "/posts/one", Title: "One", PublishedAt: sql.NullString{String: "2026-07-30T09:00:00Z", Valid: true}},
 	}, s.stored(id))
 	s.Equal(0, s.feeds.Requests(sitemapPath))
 }
 
-func (s *FetchTestSuite) TestFetchAllBackfillsAtMostTheCapPerBlog() {
+func (s *FetchTestSuite) TestBackfillsAtMostTheCapPerBlog() {
 	s.setFeed(historyFeedPath)
 	id := s.insertBlog(historyFeedPath)
 	var entries []string
@@ -317,15 +369,14 @@ func (s *FetchTestSuite) TestFetchAllBackfillsAtMostTheCapPerBlog() {
 	}
 	s.setSitemap(sitemapPath, entries...)
 
-	_, err := s.articles.FetchAll(s.Ctx)
+	s.fetchAndBackfill()
 
-	s.Require().NoError(err)
 	s.Len(s.stored(id), backfillMax)
 	s.Equal(0, s.feeds.Requests("/posts/0"))
 	s.requireBackfilled(id)
 }
 
-func (s *FetchTestSuite) TestFetchAllBackfillsOlderWordPressFeedPagesUntilTheWindowEnds() {
+func (s *FetchTestSuite) TestBackfillsOlderWordPressFeedPagesUntilTheWindowEnds() {
 	id := s.insertBlog(historyFeedPath)
 	s.setFeed(historyFeedPath, s.feeds.URL()+"/p1")
 	dated := func(name, day string) string {
@@ -337,42 +388,81 @@ func (s *FetchTestSuite) TestFetchAllBackfillsOlderWordPressFeedPagesUntilTheWin
 	s.feeds.Set(historyFeedPath+"?paged=3", rssType, fmt.Sprintf(itemsFmt, dated("p3a", "2026-01-01")+dated("p3b", "2025-01-01")))
 	s.feeds.Set(historyFeedPath+"?paged=4", rssType, fmt.Sprintf(itemsFmt, dated("p4a", "2025-12-01")))
 
-	_, err := s.articles.FetchAll(s.Ctx)
+	s.fetchAndBackfill()
 
-	s.Require().NoError(err)
 	s.Equal([]string{"/p2a", "/p2b", "/p3a", "/p1"}, s.storedURLs(id))
 	s.requireBackfilled(id)
 }
 
-func (s *FetchTestSuite) TestFetchAllBackfillStopsAtUnreadablePageButFinishes() {
+func (s *FetchTestSuite) TestBackfillSkipsAnUnreadablePage() {
 	s.setFeed(historyFeedPath)
 	id := s.insertBlog(historyFeedPath)
 	s.setSitemap(sitemapPath, "/posts/missing", "2026-09-01", "/posts/older", "2026-08-01")
 	s.setPage("/posts/older", "<title>Older</title>")
 
-	_, err := s.articles.FetchAll(s.Ctx)
+	s.fetchAndBackfill()
 
-	s.Require().NoError(err)
-	s.Empty(s.stored(id))
-	s.Equal(0, s.feeds.Requests("/posts/older"))
+	s.Equal([]string{"/posts/older"}, s.storedURLs(id))
 	s.requireBackfilled(id)
-	status, err := s.runs.Status(s.Ctx, firstRunID)
-	s.Require().NoError(err)
-	s.Equal(string(domain.RunStatusOK), status)
 }
 
-func (s *FetchTestSuite) TestFetchAllBackfillsABlogOnce() {
+func (s *FetchTestSuite) TestBackfillStopsAfterFiveUnreadablePagesInARow() {
+	s.setFeed(historyFeedPath)
+	id := s.insertBlog(historyFeedPath)
+	var entries []string
+	for day := 9; day >= 5; day-- {
+		entries = append(entries, fmt.Sprintf("/posts/missing-%d", day), fmt.Sprintf("2026-09-%02d", day))
+	}
+	entries = append(entries, "/posts/older", "2026-08-01")
+	s.setSitemap(sitemapPath, entries...)
+	s.setPage("/posts/older", "<title>Older</title>")
+
+	s.fetchAndBackfill()
+
+	s.Empty(s.stored(id))
+	s.Equal(0, s.feeds.Requests("/posts/older"))
+}
+
+func (s *FetchTestSuite) TestBackfillThatFindsNothingIsTriedOnceADayThreeTimes() {
 	s.setFeed(historyFeedPath)
 	s.insertBlog(historyFeedPath)
 	s.setSitemap(sitemapPath)
 
-	_, err := s.articles.FetchAll(s.Ctx)
-	s.Require().NoError(err)
-	_, err = s.articles.FetchAll(s.Ctx)
-	s.Require().NoError(err)
-
+	s.fetchAndBackfill()
+	s.fetchAndBackfill()
 	s.Equal(1, s.feeds.Requests(robotsPath))
-	s.Equal(1, s.feeds.Requests(sitemapPath))
+	for _, want := range []int{2, 3, 3} {
+		s.Clock.Advance(25 * time.Hour)
+		s.fetchAndBackfill()
+		s.Equal(want, s.feeds.Requests(robotsPath))
+	}
+}
+
+func (s *FetchTestSuite) TestBackfillDoneIsNotRepeated() {
+	s.setFeed(historyFeedPath)
+	id := s.insertBlog(historyFeedPath)
+	s.setSitemap(sitemapPath, "/posts/one", "2026-08-01")
+	s.setPage("/posts/one", "<title>One</title>")
+
+	s.fetchAndBackfill()
+	s.Clock.Advance(25 * time.Hour)
+	s.fetchAndBackfill()
+
+	s.requireBackfilled(id)
+	s.Equal(1, s.feeds.Requests(robotsPath))
+}
+
+func (s *FetchTestSuite) TestBackfillStoresNoSecondRowForAnotherHostSpellingOfAFeedArticle() {
+	wwwURL := strings.Replace(s.feeds.URL(), "http://", "http://www.", 1)
+	s.setFeed(historyFeedPath, wwwURL+"/posts/a")
+	id := s.insertBlog(historyFeedPath)
+	s.setSitemap(sitemapPath, "/posts/a", "2026-08-01")
+	s.setPage("/posts/a", "<title>A</title>")
+
+	s.fetchAndBackfill()
+
+	s.Equal([]string{wwwURL + "/posts/a"}, s.rawStoredURLs(id))
+	s.Equal(0, s.feeds.Requests("/posts/a"))
 }
 
 func (s *FetchTestSuite) TestUndatedFeedItemStaysUndatedUntilTheSitemapDatesIt() {
@@ -380,9 +470,8 @@ func (s *FetchTestSuite) TestUndatedFeedItemStaysUndatedUntilTheSitemapDatesIt()
 	id := s.insertBlog(historyFeedPath)
 	s.setSitemap(sitemapPath, "/posts/undated", "2026-04-01T00:00:00Z")
 
-	_, err := s.articles.FetchAll(s.Ctx)
+	s.fetchAndBackfill()
 
-	s.Require().NoError(err)
 	s.Equal([]testsrepository.StoredArticle{
 		{URL: s.feeds.URL() + "/posts/undated", Title: "Item 0", PublishedAt: sql.NullString{String: "2026-04-01T00:00:00Z", Valid: true}},
 		{URL: s.feeds.URL() + "/posts/never-dated", Title: "Item 1"},

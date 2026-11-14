@@ -249,7 +249,7 @@ func (s *DigestTestSuite) TestShowWithZeroPicksFromEveryBackendFails() {
 	err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
 
 	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
-	s.Equal([]string{failureLine}, s.slack.Posted())
+	s.Empty(s.slack.Posted())
 	s.Equal(0, s.CountRows("post"))
 }
 
@@ -352,6 +352,7 @@ func (s *DigestTestSuite) TestShowWhereAllBackendsFailRepliesWithTheReason() {
 
 	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
 	s.Equal([]string{failureLine}, s.replyTexts())
+	s.Empty(s.slack.Posted())
 }
 
 func (s *DigestTestSuite) TestShowSuccessSendsNoReply() {

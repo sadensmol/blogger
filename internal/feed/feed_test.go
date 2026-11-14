@@ -219,3 +219,19 @@ func TestHostDelaySpacesRequestsToOneHost(t *testing.T) {
 
 	require.GreaterOrEqual(t, time.Since(start), 2*delay)
 }
+
+func TestHostDelayWaitEndsWithTheContext(t *testing.T) {
+	const delay = 5 * time.Second
+	srv := serveFixtures(t, map[string]string{"/feed.xml": "rss.xml"})
+	client := feed.NewClient(timeout, feed.WithLoopbackAllowed(), feed.WithHostDelay(delay))
+	_, err := client.Fetch(context.Background(), mustURL(t, srv.URL+"/feed.xml"))
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err = client.Fetch(ctx, mustURL(t, srv.URL+"/feed.xml"))
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Less(t, time.Since(start), delay)
+}

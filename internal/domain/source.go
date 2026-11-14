@@ -47,15 +47,31 @@ type Source struct {
 	Votes            Votes // all time, for lists
 	VotesSinceStatus Votes // since StatusChangedAt, for the status rule
 	FetchedAt        time.Time // the last read of the feed that worked
-	BackfilledAt     time.Time // when the older articles were collected once
+	FetchFailedAt    time.Time // the last read of the feed that failed
+	BackfilledAt     time.Time // when older articles were collected
+	BackfillTries    int       // backfills that collected nothing
+	BackfillTriedAt  time.Time
 }
+
+const (
+	feedBackoff        = time.Hour
+	maxBackfillTries   = 3
+	backfillRetryAfter = 24 * time.Hour
+)
 
 func (s Source) NeverFetched() bool {
 	return s.FetchedAt.IsZero()
 }
 
-func (s Source) Backfilled() bool {
-	return !s.BackfilledAt.IsZero()
+// FeedBackedOff reports a feed that failed within the last hour: it is not read again yet.
+func (s Source) FeedBackedOff(now time.Time) bool {
+	return !s.FetchFailedAt.IsZero() && now.Sub(s.FetchFailedAt) < feedBackoff
+}
+
+// BackfillDue reports a blog whose older articles are not collected yet; a backfill that found nothing
+// is tried again a day later, three times at most.
+func (s Source) BackfillDue(now time.Time) bool {
+	return s.BackfilledAt.IsZero() && s.BackfillTries < maxBackfillTries && now.Sub(s.BackfillTriedAt) >= backfillRetryAfter
 }
 
 func (s Source) StatusAfterVotes() SourceStatus {

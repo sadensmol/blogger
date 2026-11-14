@@ -97,6 +97,20 @@ func (s *Source) MarkFetched(ctx context.Context, id domain.SourceID) error {
 	return nil
 }
 
+func (s *Source) MarkFetchFailed(ctx context.Context, id domain.SourceID) error {
+	if err := s.repo.UpdateFetchFailedAt(ctx, id, s.now()); err != nil {
+		return fmt.Errorf("cannot mark the fetch of blog %d failed: %w", id, err)
+	}
+	return nil
+}
+
+func (s *Source) CountBackfillTry(ctx context.Context, id domain.SourceID) error {
+	if err := s.repo.IncBackfillTries(ctx, id, s.now()); err != nil {
+		return fmt.Errorf("cannot count a backfill try of blog %d: %w", id, err)
+	}
+	return nil
+}
+
 func (s *Source) MarkBackfilled(ctx context.Context, id domain.SourceID) error {
 	if err := s.repo.UpdateBackfilledAt(ctx, id, s.now()); err != nil {
 		return fmt.Errorf("cannot mark blog %d backfilled: %w", id, err)

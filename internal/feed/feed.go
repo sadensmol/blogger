@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -86,7 +87,7 @@ func NewClient(timeout time.Duration, opts ...Option) *Client {
 
 	var gates *hostGates
 	if cfg.hostDelay > 0 {
-		gates = &hostGates{delay: cfg.hostDelay, hosts: map[string]*hostGate{}}
+		gates = &hostGates{delay: cfg.hostDelay, hosts: map[string]chan time.Time{}}
 	}
 	return &Client{
 		gates: gates,
@@ -213,6 +214,43 @@ func (c *Client) get(ctx context.Context, target domain.URL) ([]byte, error) {
 	}
 
 	return body, nil
+}
+
+// hostGates lets one request at a time reach a host, with a pause between them.
+type hostGates struct {
+	delay time.Duration
+	mu    sync.Mutex
+	hosts map[string]chan time.Time // holds the end of the host's last request while the host is free
+}
+
+// enter waits for the host's turn; the caller calls leave when its request ends.
+func (g *hostGates) enter(ctx context.Context, host string) (func(), error) {
+	g.mu.Lock()
+	turn, ok := g.hosts[host]
+	if !ok {
+		turn = make(chan time.Time, 1)
+		turn <- time.Time{}
+		g.hosts[host] = turn
+	}
+	g.mu.Unlock()
+
+	var last time.Time
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case last = <-turn:
+	}
+	if wait := time.Until(last.Add(g.delay)); wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			turn <- last
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return func() { turn <- time.Now() }, nil
 }
 
 func (c *Client) info(ctx context.Context, feedURL domain.URL, parsed *gofeed.Feed) Info {

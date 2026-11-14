@@ -155,7 +155,8 @@ func (d *Digest) digest(ctx context.Context, kind domain.RunKind, runID domain.R
 	}
 
 	picks, backend, err := d.llm.PickArticles(ctx, llm.PickInput{Candidates: candidates, Profile: profile, Count: count})
-	if errors.Is(err, llm.ErrAllBackendsFailed) {
+	// /show tells the user privately (see Show); the morning digest has nobody to answer but the channel
+	if errors.Is(err, llm.ErrAllBackendsFailed) && kind == domain.RunKindDigestMorning {
 		if postErr := d.poster.Text(ctx, pickFailedText); postErr != nil {
 			log.Ctx(ctx).Error().Err(postErr).Msgf("cannot tell slack that digest run %d failed", runID)
 		}

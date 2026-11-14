@@ -35,3 +35,18 @@ func TestParseURLRejects(t *testing.T) {
 		})
 	}
 }
+
+func TestURLWithOriginOf(t *testing.T) {
+	tests := []struct {
+		url, origin domain.URL
+		want        domain.URL
+	}{
+		{"https://www.example.com/a?x=1", "https://example.com/b", "https://example.com/a?x=1"},
+		{"http://example.com/a", "https://www.example.com/", "https://www.example.com/a"},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.url), func(t *testing.T) {
+			require.Equal(t, tt.want, tt.url.WithOriginOf(tt.origin))
+		})
+	}
+}

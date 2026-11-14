@@ -8,6 +8,7 @@ const (
 	RunKindDigestMorning RunKind = "digest-morning"
 	RunKindDigestShow    RunKind = "digest-show"
 	RunKindFetch         RunKind = "fetch"
+	RunKindFetchFeeds    RunKind = "fetch-feeds" // a digest's own feed read: it never moves the scheduled fetch
 	RunKindProfileInit   RunKind = "profile-init"
 	RunKindProfileUpdate RunKind = "profile-update"
 	RunKindDiscovery     RunKind = "discovery"

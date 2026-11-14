@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -27,8 +26,8 @@ const (
 
 var (
 	defaultSitemapPaths = []string{"/sitemap.xml", "/sitemap_index.xml"}
-	lastModLayouts      = []string{time.RFC3339, "2006-01-02T15:04Z07:00", time.DateOnly}
-	listingSegments     = []string{"tag", "tags", "category", "categories", "page", "author"}
+	sitemapTimeLayouts  = []string{time.RFC3339, "2006-01-02T15:04Z07:00", time.DateOnly}
+	listingSections     = []string{"tag", "tags", "category", "categories", "author"}
 )
 
 type SitemapEntry struct {
@@ -51,45 +50,6 @@ type sitemapLocXML struct {
 	LastMod string `xml:"lastmod"`
 }
 
-// hostGates lets one request at a time reach a host, with a pause between them.
-type hostGates struct {
-	delay time.Duration
-	mu    sync.Mutex
-	hosts map[string]*hostGate
-}
-
-type hostGate struct {
-	mu   sync.Mutex
-	last time.Time
-}
-
-// enter waits for the host's turn; the caller calls leave when its request ends.
-func (g *hostGates) enter(ctx context.Context, host string) (func(), error) {
-	g.mu.Lock()
-	gate, ok := g.hosts[host]
-	if !ok {
-		gate = &hostGate{}
-		g.hosts[host] = gate
-	}
-	g.mu.Unlock()
-
-	gate.mu.Lock()
-	if wait := time.Until(gate.last.Add(g.delay)); wait > 0 {
-		timer := time.NewTimer(wait)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			gate.mu.Unlock()
-			return nil, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	return func() {
-		gate.last = time.Now()
-		gate.mu.Unlock()
-	}, nil
-}
-
 // FetchPaged reads page n of a feed that pages like WordPress, with ?paged=n.
 func (c *Client) FetchPaged(ctx context.Context, feedURL domain.URL, page int) ([]Item, error) {
 	u, err := url.Parse(string(feedURL))
@@ -102,10 +62,10 @@ func (c *Client) FetchPaged(ctx context.Context, feedURL domain.URL, page int) (
 	return c.Fetch(ctx, domain.URL(u.String()))
 }
 
-// ReadSitemaps lists the article urls of a blog changed after after, newest first.
+// ReadSitemaps lists the newest max article urls of a blog changed after after, newest first.
 // It reads the sitemaps that robots.txt names, else the common sitemap paths, and follows sitemap indexes.
 // A sitemap that a root lists and that cannot be read stops it: it returns what it has with the error.
-func (c *Client) ReadSitemaps(ctx context.Context, siteURL domain.URL, after time.Time) ([]SitemapEntry, error) {
+func (c *Client) ReadSitemaps(ctx context.Context, siteURL domain.URL, after time.Time, max int) ([]SitemapEntry, error) {
 	site, err := url.Parse(string(siteURL))
 	if err != nil {
 		return nil, fmt.Errorf("cannot parse site url %s: %w", siteURL, err)
@@ -126,7 +86,7 @@ func (c *Client) ReadSitemaps(ctx context.Context, siteURL domain.URL, after tim
 
 		doc, err := c.readSitemap(ctx, loc)
 		if err != nil && slices.Contains(roots, loc) {
-			log.Ctx(ctx).Debug().Err(err).Msgf("sitemap %s of %s is not usable", loc, siteURL)
+			log.Ctx(ctx).Info().Err(err).Msgf("sitemap %s of %s skipped", loc, siteURL)
 			continue
 		}
 		if err != nil {
@@ -134,14 +94,14 @@ func (c *Client) ReadSitemaps(ctx context.Context, siteURL domain.URL, after tim
 			break
 		}
 		for _, child := range doc.Sitemaps {
-			lastMod := parseLastMod(child.LastMod)
+			lastMod := parseSitemapTime(child.LastMod)
 			if !lastMod.IsZero() && !lastMod.After(after) {
 				continue
 			}
 			queue = append(queue, resolveReference(domain.URL(loc), child.Loc))
 		}
 		for _, entry := range doc.URLs {
-			lastMod := parseLastMod(entry.LastMod)
+			lastMod := parseSitemapTime(entry.LastMod)
 			if !lastMod.After(after) {
 				continue
 			}
@@ -151,8 +111,19 @@ func (c *Client) ReadSitemaps(ctx context.Context, siteURL domain.URL, after tim
 			}
 			found[pageURL] = lastMod
 		}
+		// many large sitemaps must not fill the memory: only the newest max entries can be returned anyway
+		if len(found) > 2*max {
+			kept := newestEntries(found, max)
+			found = make(map[domain.URL]time.Time, len(kept))
+			for _, entry := range kept {
+				found[entry.URL] = entry.LastMod
+			}
+		}
 	}
+	return newestEntries(found, max), readErr
+}
 
+func newestEntries(found map[domain.URL]time.Time, max int) []SitemapEntry {
 	entries := make([]SitemapEntry, 0, len(found))
 	for pageURL, lastMod := range found {
 		entries = append(entries, SitemapEntry{URL: pageURL, LastMod: lastMod})
@@ -160,7 +131,7 @@ func (c *Client) ReadSitemaps(ctx context.Context, siteURL domain.URL, after tim
 	slices.SortFunc(entries, func(a, b SitemapEntry) int {
 		return cmp.Or(b.LastMod.Compare(a.LastMod), strings.Compare(string(a.URL), string(b.URL)))
 	})
-	return entries, readErr
+	return entries[:min(max, len(entries))]
 }
 
 func (c *Client) sitemapRoots(ctx context.Context, siteURL domain.URL) []string {
@@ -200,8 +171,8 @@ func (c *Client) readSitemap(ctx context.Context, loc string) (sitemapXML, error
 	return doc, nil
 }
 
-func parseLastMod(raw string) time.Time {
-	for _, layout := range lastModLayouts {
+func parseSitemapTime(raw string) time.Time {
+	for _, layout := range sitemapTimeLayouts {
 		if t, err := time.Parse(layout, strings.TrimSpace(raw)); err == nil {
 			return t.UTC()
 		}
@@ -209,7 +180,8 @@ func parseLastMod(raw string) time.Time {
 	return time.Time{}
 }
 
-// isArticleOf keeps pages under the site path; the site home, tag, category, author and pagination pages are not articles.
+// isArticleOf keeps pages under the site path. The site home, the tag, category and author sections
+// right under the site path, and the /page/<n> pagination pages are not articles.
 func isArticleOf(site *url.URL, page domain.URL) bool {
 	u, err := url.Parse(string(page))
 	if err != nil {
@@ -219,12 +191,16 @@ func isArticleOf(site *url.URL, page domain.URL) bool {
 		return false
 	}
 	sitePath := strings.TrimSuffix(site.Path, "/")
-	path := strings.TrimSuffix(u.Path, "/")
-	if !strings.HasPrefix(path, fmt.Sprintf("%s/", sitePath)) {
+	rest, ok := strings.CutPrefix(strings.TrimSuffix(u.Path, "/"), fmt.Sprintf("%s/", sitePath))
+	if !ok {
 		return false
 	}
-	for _, segment := range strings.Split(path, "/") {
-		if slices.Contains(listingSegments, strings.ToLower(segment)) {
+	segments := strings.Split(strings.ToLower(rest), "/")
+	if slices.Contains(listingSections, segments[0]) {
+		return false
+	}
+	for i := 0; i+1 < len(segments); i++ {
+		if _, err := strconv.Atoi(segments[i+1]); segments[i] == "page" && err == nil {
 			return false
 		}
 	}
@@ -280,6 +256,6 @@ func (c *Client) ReadArticle(ctx context.Context, pageURL domain.URL) (ArticleIn
 	return ArticleInfo{
 		Title:       string(titleRunes),
 		Description: excerpt(cmp.Or(meta["og:description"], meta["description"])),
-		PublishedAt: parseLastMod(meta["article:published_time"]),
+		PublishedAt: parseSitemapTime(meta["article:published_time"]),
 	}, nil
 }

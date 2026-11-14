@@ -68,6 +68,7 @@ func (s *SchedulerTestSuite) SetupTest() {
 }
 
 func (s *SchedulerTestSuite) TearDownTest() {
+	s.scheduler.Wait()
 	s.feeds.Close()
 	s.slack.Close()
 	s.Suite.TearDownTest()
@@ -203,4 +204,28 @@ func (s *SchedulerTestSuite) TestTickFetchesEveryThreeHours() {
 	s.scheduler.Tick(s.Ctx)
 
 	s.Equal(1, s.feeds.Requests(schedulerFeedPath))
+}
+
+func (s *SchedulerTestSuite) TestTickFetchIsNotPushedBackByADigestFeedRead() {
+	s.Clock.Set(s.localTime(20, 0))
+	_, err := s.runs.Insert(s.Ctx, string(domain.RunKindFetch), string(domain.RunStatusOK), s.Clock.Now().Add(-schedulerFetchEvery))
+	s.Require().NoError(err)
+	_, err = s.runs.Insert(s.Ctx, string(domain.RunKindFetchFeeds), string(domain.RunStatusOK), s.Clock.Now().Add(-time.Minute))
+	s.Require().NoError(err)
+	_, err = s.runs.Insert(s.Ctx, string(domain.RunKindDiscovery), string(domain.RunStatusOK), s.Clock.Now())
+	s.Require().NoError(err)
+
+	s.scheduler.Tick(s.Ctx)
+
+	s.Equal(1, s.feeds.Requests(schedulerFeedPath))
+}
+
+func (s *SchedulerTestSuite) TestTickBackfillsInTheBackground() {
+	s.Clock.Set(s.localTime(20, 0))
+	_, err := s.runs.Insert(s.Ctx, string(domain.RunKindDiscovery), string(domain.RunStatusOK), s.Clock.Now())
+	s.Require().NoError(err)
+
+	s.scheduler.Tick(s.Ctx)
+
+	s.Eventually(func() bool { return s.feeds.Requests("/robots.txt") == 1 }, schedulerWait, schedulerPoll)
 }

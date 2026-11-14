@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -29,6 +31,8 @@ type Data struct {
 type Scheduler struct {
 	d           Data
 	clockWarned bool
+	backfilling atomic.Bool
+	backfills   sync.WaitGroup
 }
 
 func New(d Data) *Scheduler {
@@ -50,6 +54,12 @@ func (s *Scheduler) Tick(ctx context.Context) {
 	s.fetch(ctx, now)
 	s.submitMorning(ctx, local)
 	s.submitDiscovery(ctx, local)
+	s.backfill(ctx)
+}
+
+// Wait returns when the backfill started by a tick has ended.
+func (s *Scheduler) Wait() {
+	s.backfills.Wait()
 }
 
 func (s *Scheduler) Run(ctx context.Context) {
@@ -59,6 +69,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 		s.Tick(ctx)
 		select {
 		case <-ctx.Done():
+			s.Wait()
 			return
 		case <-ticker.C:
 		}
@@ -102,4 +113,17 @@ func (s *Scheduler) fetch(ctx context.Context, now time.Time) {
 	if _, err := s.d.Articles.FetchAll(ctx); err != nil {
 		log.Ctx(ctx).Error().Err(err).Msg("scheduled fetch failed")
 	}
+}
+
+// backfill runs beside the ticks: a first backfill can take long, and the next morning digest must not wait for it.
+func (s *Scheduler) backfill(ctx context.Context) {
+	if !s.backfilling.CompareAndSwap(false, true) {
+		return
+	}
+	s.backfills.Go(func() {
+		defer s.backfilling.Store(false)
+		if _, err := s.d.Articles.Backfill(ctx); err != nil {
+			log.Ctx(ctx).Error().Err(err).Msg("backfill failed")
+		}
+	})
 }
