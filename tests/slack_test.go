@@ -12,6 +12,7 @@ import (
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
+	"github.com/slack-go/slack/socketmode"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/sadensmol/blogger/internal/app"
@@ -239,12 +240,15 @@ func (s *SlackTestSuite) sections(rawBlocks string) []*slack.SectionBlock {
 	return sections
 }
 
-func (s *SlackTestSuite) click(userID string, proposalID int64) {
-	var cb slack.InteractionCallback
-	payload := fmt.Sprintf(`{"type":"block_actions","user":{"id":%q},"channel":{"id":%q},"response_url":%q,`+
+func (s *SlackTestSuite) clickPayload(userID, channelID string, proposalID int64) string {
+	return fmt.Sprintf(`{"type":"block_actions","user":{"id":%q},"channel":{"id":%q},"response_url":%q,`+
 		`"actions":[{"type":"button","block_id":"b1","action_id":%q,"value":"%d"}]}`,
-		userID, digestChannelID, fmt.Sprintf("%s/response/click", s.slack.URL), slackpost.AddBlogAction, proposalID)
-	s.Require().NoError(json.Unmarshal([]byte(payload), &cb))
+		userID, channelID, fmt.Sprintf("%s/response/click", s.slack.URL), slackpost.AddBlogAction, proposalID)
+}
+
+func (s *SlackTestSuite) click(userID, channelID string, proposalID int64) {
+	var cb slack.InteractionCallback
+	s.Require().NoError(json.Unmarshal([]byte(s.clickPayload(userID, channelID, proposalID)), &cb))
 
 	s.handler.BlockActions(s.Ctx, cb)
 	s.handler.Wait()
@@ -463,7 +467,10 @@ func (s *SlackTestSuite) TestDiscoverPostsNewBlogsWithAddButtons() {
 
 	proposals := s.listProposals()
 	s.Require().Len(proposals, 2)
-	sections := s.sections(s.slack.PostedBlocks()[0])
+	form := s.slack.PostedForms()[0]
+	s.Equal("false", form.Get("unfurl_links"))
+	s.Equal("false", form.Get("unfurl_media"))
+	sections := s.sections(form.Get("blocks"))
 	s.Require().Len(sections, 2)
 	for i, path := range []string{first, second} {
 		s.Equal(s.feedURL(path), proposals[i].FeedURL)
@@ -495,7 +502,7 @@ func (s *SlackTestSuite) TestOwnerAddClickAddsBlogAndMarksIt() {
 	s.answerBlogs(first, second)
 	s.discover()
 
-	s.click(slackOwnerID, s.listProposals()[0].ID)
+	s.click(slackOwnerID, digestChannelID, s.listProposals()[0].ID)
 
 	detail, err := s.sources.Detail(s.Ctx, s.feedURL(first))
 	s.Require().NoError(err)
@@ -522,9 +529,9 @@ func (s *SlackTestSuite) TestSecondAddClickAddsNoDuplicate() {
 	s.answerBlogs(good)
 	s.discover()
 	proposalID := s.listProposals()[0].ID
-	s.click(slackOwnerID, proposalID)
+	s.click(slackOwnerID, digestChannelID, proposalID)
 
-	s.click(slackOwnerID, proposalID)
+	s.click(slackOwnerID, digestChannelID, proposalID)
 
 	s.Equal(2, s.CountRows("source"))
 	s.Require().Len(s.slack.Replies(), 1)
@@ -538,7 +545,7 @@ func (s *SlackTestSuite) TestAddClickOfAnotherUserIsIgnored() {
 	s.answerBlogs(good)
 	s.discover()
 
-	s.click(slackOtherUser, s.listProposals()[0].ID)
+	s.click(slackOtherUser, digestChannelID, s.listProposals()[0].ID)
 
 	s.Equal(1, s.CountRows("source"))
 	s.Equal(string(domain.ProposalProposed), s.listProposals()[0].Status)
@@ -557,4 +564,86 @@ func (s *SlackTestSuite) TestDiscoverNeverUsesCodexOSS() {
 	s.Empty(s.slack.Posted())
 	s.Require().Len(s.slack.Replies(), 1)
 	s.Contains(s.slack.Replies()[0], "no agent with web search answered")
+}
+
+func (s *SlackTestSuite) TestAddClickInAnotherChannelIsIgnored() {
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+	s.discover()
+
+	s.click(slackOwnerID, "C2", s.listProposals()[0].ID)
+
+	s.Equal(1, s.CountRows("source"))
+	s.Equal(string(domain.ProposalProposed), s.listProposals()[0].Status)
+	s.Empty(s.slack.Updates())
+}
+
+func (s *SlackTestSuite) TestDiscoverCutsLongTitleAndAbout() {
+	const (
+		maxTitle = 150
+		maxAbout = 300
+	)
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.agents.Answer(llm.Claude, llm.SkillDiscoverBlogs, map[string]any{"blogs": []map[string]any{{
+		"site_url": s.siteURL(good), "feed_url": s.feedURL(good), "reason": goodReason,
+		"title": strings.Repeat("t", 1000), "about": strings.Repeat("a&", 2500),
+	}}})
+
+	s.discover()
+
+	proposals := s.listProposals()
+	s.Require().Len(proposals, 1)
+	s.Equal(fmt.Sprintf("%s…", strings.Repeat("t", maxTitle-1)), proposals[0].Title)
+	s.Len([]rune(proposals[0].About), maxAbout)
+	s.True(strings.HasSuffix(proposals[0].About, "…"))
+	sections := s.sections(s.slack.PostedForms()[0].Get("blocks"))
+	s.Require().Len(sections, 1)
+	s.Contains(sections[0].Text.Text, strings.ReplaceAll(proposals[0].About, "&", "&amp;"))
+}
+
+func (s *SlackTestSuite) TestDiscoverPostRejectedKeepsNoProposals() {
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+	s.slack.PostFaults = []tests.PostFault{tests.PostRejected}
+
+	s.Equal(slackLooking, s.ack(s.ownerCommand("/discover", "")))
+
+	s.Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	s.Contains(s.slack.Replies()[0], "the channel was not found")
+	s.Empty(s.slack.Posted())
+	s.Empty(s.listProposals())
+}
+
+func (s *SlackTestSuite) TestClickThroughSocketModeIsAckedAndAddsBlog() {
+	const envelopeID = "env-1"
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+	s.discover()
+	api := slack.New("xoxb-test", slack.OptionAPIURL(fmt.Sprintf("%s/api/", s.slack.URL)), slack.OptionAppLevelToken("xapp-test"))
+	ctx, cancel := context.WithCancel(s.Ctx)
+	listenDone := make(chan error, 1)
+	go func() {
+		listenDone <- controllerslack.Listen(ctx, socketmode.New(api), s.handler)
+	}()
+
+	s.slack.SendEnvelope(fmt.Sprintf(`{"envelope_id":%q,"type":"interactive","accepts_response_payload":false,"payload":%s}`,
+		envelopeID, s.clickPayload(slackOwnerID, digestChannelID, s.listProposals()[0].ID)))
+
+	s.Eventually(func() bool { return slices.Contains(s.slack.Acks(), envelopeID) }, slackWait, slackPoll)
+	s.Eventually(func() bool { return len(s.slack.Updates()) == 1 }, slackWait, slackPoll)
+	cancel()
+	s.Require().NoError(<-listenDone)
+	s.handler.Wait()
+	detail, err := s.sources.Detail(s.Ctx, s.feedURL(good))
+	s.Require().NoError(err)
+	s.Equal(string(domain.SourceActive), detail.Status)
+	s.Equal(string(domain.ProposalAdded), s.listProposals()[0].Status)
 }

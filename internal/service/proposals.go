@@ -33,6 +33,13 @@ func (p *Proposals) SetMessage(ctx context.Context, runID domain.RunID, channelI
 	return nil
 }
 
+func (p *Proposals) DeleteOfRun(ctx context.Context, runID domain.RunID) error {
+	if err := p.repo.DeleteByRunID(ctx, runID); err != nil {
+		return fmt.Errorf("cannot remove the proposals of run %d: %w", runID, err)
+	}
+	return nil
+}
+
 func (p *Proposals) MarkAdded(ctx context.Context, id domain.ProposalID) error {
 	if err := p.repo.UpdateStatus(ctx, id, domain.ProposalAdded, p.now()); err != nil {
 		return fmt.Errorf("cannot mark proposal %d added: %w", id, err)

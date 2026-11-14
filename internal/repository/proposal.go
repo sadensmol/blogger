@@ -50,6 +50,14 @@ func (r *Proposal) UpdateStatus(ctx context.Context, id domain.ProposalID, statu
 	return requireAffected(result, fmt.Sprintf("proposal %d", id))
 }
 
+func (r *Proposal) DeleteByRunID(ctx context.Context, runID domain.RunID) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM blog_proposal WHERE run_id = ?`, runID)
+	if err != nil {
+		return fmt.Errorf("cannot delete the proposals of run %d: %w", runID, err)
+	}
+	return requireAffected(result, fmt.Sprintf("proposals of run %d", runID))
+}
+
 type proposalRow struct {
 	id, runID                      int64
 	channelID, messageTS           sql.NullString

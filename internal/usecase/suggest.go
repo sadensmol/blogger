@@ -140,6 +140,12 @@ func (s *Suggest) suggest(ctx context.Context, runID domain.RunID) (llm.Backend,
 
 	ts, channelID, err := s.poster.Proposals(ctx, proposals)
 	if err != nil {
+		// a lost answer may hide a posted message whose buttons still need their proposals
+		if slackpost.NotPosted(err) {
+			if delErr := s.proposals.DeleteOfRun(context.WithoutCancel(ctx), runID); delErr != nil {
+				log.Ctx(ctx).Error().Err(delErr).Msgf("%s run %d keeps proposals that slack rejected", domain.RunKindSuggest, runID)
+			}
+		}
 		return backend, fmt.Errorf("cannot post proposed blogs: %w", err)
 	}
 	// the message is in slack: a cancelled job must still store it

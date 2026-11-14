@@ -16,12 +16,14 @@ func NewProposal(db *sql.DB) *Proposal {
 type ProposalRow struct {
 	ID        int64
 	FeedURL   string
+	Title     string
+	About     string
 	Status    string
 	MessageTS string
 }
 
 func (r *Proposal) List(ctx context.Context) ([]ProposalRow, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, feed_url, status, COALESCE(message_ts, '') FROM blog_proposal ORDER BY id`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, feed_url, title, about, status, COALESCE(message_ts, '') FROM blog_proposal ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +31,7 @@ func (r *Proposal) List(ctx context.Context) ([]ProposalRow, error) {
 	var proposals []ProposalRow
 	for rows.Next() {
 		var p ProposalRow
-		if err := rows.Scan(&p.ID, &p.FeedURL, &p.Status, &p.MessageTS); err != nil {
+		if err := rows.Scan(&p.ID, &p.FeedURL, &p.Title, &p.About, &p.Status, &p.MessageTS); err != nil {
 			return nil, err
 		}
 		proposals = append(proposals, p)

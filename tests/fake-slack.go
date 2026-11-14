@@ -1,13 +1,20 @@
 package tests
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
+	"unicode/utf8"
+
+	"github.com/gorilla/websocket"
 )
+
+const maxSectionText = 3000
 
 type PostFault int
 
@@ -29,15 +36,17 @@ type FakeSlack struct {
 	BlockMethod string
 	OnBlock     func()
 
-	server       *httptest.Server
-	mu           sync.Mutex
-	posted       []string
-	postedBlocks []string
-	updates      []SlackUpdate
-	reactions    []string
-	replies      []string
-	counter      int
-	postCalls    int
+	server    *httptest.Server
+	envelopes chan string
+	mu        sync.Mutex
+	posted    []string
+	postForms []url.Values
+	updates   []SlackUpdate
+	reactions []string
+	replies   []string
+	acks      []string
+	counter   int
+	postCalls int
 }
 
 type SlackUpdate struct {
@@ -45,7 +54,7 @@ type SlackUpdate struct {
 }
 
 func NewFakeSlack() *FakeSlack {
-	f := &FakeSlack{}
+	f := &FakeSlack{envelopes: make(chan string, 10)}
 	f.server = httptest.NewServer(http.HandlerFunc(f.serve))
 	f.URL = f.server.URL
 	return f
@@ -65,6 +74,11 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.OnBlock()
 		<-r.Context().Done()
+		return
+	}
+
+	if r.URL.Path == "/socket" {
+		f.serveSocket(w, r)
 		return
 	}
 
@@ -100,9 +114,13 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprint(w, `{"ok":false,"error":"not_in_channel"}`)
 			return
 		}
+		if tooLongSection(r.PostForm.Get("blocks")) {
+			fmt.Fprint(w, `{"ok":false,"error":"invalid_blocks"}`)
+			return
+		}
 		f.counter++
 		f.posted = append(f.posted, r.PostForm.Get("text"))
-		f.postedBlocks = append(f.postedBlocks, r.PostForm.Get("blocks"))
+		f.postForms = append(f.postForms, r.PostForm)
 		if fault == PostDropped {
 			conn, _, err := w.(http.Hijacker).Hijack()
 			if err != nil {
@@ -114,11 +132,17 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(w, `{"ok":true,"channel":"C1","ts":"%d.000100"}`, f.counter)
 	case "chat.update":
+		if tooLongSection(r.PostForm.Get("blocks")) {
+			fmt.Fprint(w, `{"ok":false,"error":"invalid_blocks"}`)
+			return
+		}
 		f.updates = append(f.updates, SlackUpdate{Channel: r.PostForm.Get("channel"), TS: r.PostForm.Get("ts"), Blocks: r.PostForm.Get("blocks")})
 		fmt.Fprintf(w, `{"ok":true,"channel":%q,"ts":%q}`, r.PostForm.Get("channel"), r.PostForm.Get("ts"))
 	case "reactions.add":
 		f.reactions = append(f.reactions, fmt.Sprintf("%s:%s", r.PostForm.Get("timestamp"), r.PostForm.Get("name")))
 		_, _ = w.Write([]byte(`{"ok":true}`))
+	case "apps.connections.open":
+		fmt.Fprintf(w, `{"ok":true,"url":"ws%s/socket"}`, strings.TrimPrefix(f.URL, "http"))
 	case "auth.test":
 		_, _ = w.Write([]byte(`{"ok":true,"user_id":"UBOT"}`))
 	default:
@@ -132,11 +156,11 @@ func (f *FakeSlack) Posted() []string {
 	return append([]string(nil), f.posted...)
 }
 
-// PostedBlocks holds the blocks json of each posted message, empty for a text-only one, in the order of Posted.
-func (f *FakeSlack) PostedBlocks() []string {
+// PostedForms holds the form of each posted message, in the order of Posted.
+func (f *FakeSlack) PostedForms() []url.Values {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]string(nil), f.postedBlocks...)
+	return append([]url.Values(nil), f.postForms...)
 }
 
 func (f *FakeSlack) Updates() []SlackUpdate {
@@ -155,4 +179,76 @@ func (f *FakeSlack) Replies() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.replies...)
+}
+
+// SendEnvelope sends a raw Socket Mode envelope to the connected client.
+func (f *FakeSlack) SendEnvelope(raw string) {
+	f.envelopes <- raw
+}
+
+// Acks returns the envelope ids that the client acknowledged.
+func (f *FakeSlack) Acks() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.acks...)
+}
+
+func (f *FakeSlack) serveSocket(w http.ResponseWriter, r *http.Request) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	if err := conn.WriteJSON(map[string]any{"type": "hello", "num_connections": 1}); err != nil {
+		return
+	}
+
+	gone := make(chan struct{})
+	go func() {
+		defer close(gone)
+		for {
+			var ack struct {
+				EnvelopeID string `json:"envelope_id"`
+			}
+			if err := conn.ReadJSON(&ack); err != nil {
+				return
+			}
+			f.mu.Lock()
+			f.acks = append(f.acks, ack.EnvelopeID)
+			f.mu.Unlock()
+		}
+	}()
+	for {
+		select {
+		case raw := <-f.envelopes:
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(raw)); err != nil {
+				return
+			}
+		case <-gone:
+			return
+		}
+	}
+}
+
+// tooLongSection models slack's invalid_blocks answer for a section text over 3000 characters.
+func tooLongSection(rawBlocks string) bool {
+	if rawBlocks == "" {
+		return false
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text struct {
+			Text string `json:"text"`
+		} `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(rawBlocks), &blocks); err != nil {
+		return true
+	}
+	for _, block := range blocks {
+		if block.Type == "section" && utf8.RuneCountInString(block.Text.Text) > maxSectionText {
+			return true
+		}
+	}
+	return false
 }

@@ -8,6 +8,12 @@ import (
 	"github.com/sadensmol/blogger/internal/domain"
 )
 
+// a proposed blog's title and about go into one slack section, which holds at most 3000 characters
+const (
+	maxBlogTitle = 150
+	maxBlogAbout = 300
+)
+
 type PickInput struct {
 	Candidates []domain.Article
 	Profile    domain.Profile
@@ -260,7 +266,15 @@ func (b blogJSON) toDomain() (domain.BlogProposal, error) {
 	if err != nil {
 		return domain.BlogProposal{}, fmt.Errorf("bad feed url: %w", err)
 	}
-	return domain.BlogProposal{SiteURL: siteURL, FeedURL: feedURL, Title: b.Title, About: b.About, Reason: b.Reason}, nil
+	title := []rune(b.Title)
+	if len(title) > maxBlogTitle {
+		title = append(title[:maxBlogTitle-1], '…')
+	}
+	about := []rune(b.About)
+	if len(about) > maxBlogAbout {
+		about = append(about[:maxBlogAbout-1], '…')
+	}
+	return domain.BlogProposal{SiteURL: siteURL, FeedURL: feedURL, Title: string(title), About: string(about), Reason: b.Reason}, nil
 }
 
 func (r *Runner) DiscoverBlogs(ctx context.Context, sources []domain.Source, max int) ([]domain.BlogProposal, Backend, error) {
