@@ -35,7 +35,7 @@ func (c *CodexBackend) Answer(ctx context.Context, job Job) ([]byte, error) {
 }
 
 func (c *CodexBackend) login() []string {
-	return []string{fmt.Sprintf("CODEX_HOME=%s", filepath.Join(c.cfg.Home, ".codex"))}
+	return []string{fmt.Sprintf("CODEX_HOME=%s", filepath.Join(c.cfg.RunAs.Home, ".codex"))}
 }
 
 // answer puts flags before the prompt; the prompt stays the last argument.
@@ -59,7 +59,7 @@ func (c *CodexBackend) answer(ctx context.Context, job Job, flags, login []strin
 		Bin:      c.cfg.CodexBin,
 		Args:     args,
 		Env:      login,
-		Home:     c.cfg.Home,
+		RunAs:    c.cfg.RunAs,
 		WorkDir:  c.cfg.AgentDir,
 		JobDir:   job.Dir,
 		Timeout:  c.cfg.Timeout,

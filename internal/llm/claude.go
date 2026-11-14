@@ -60,7 +60,7 @@ func (c *ClaudeBackend) Answer(ctx context.Context, job Job) ([]byte, error) {
 		Bin:      c.cfg.ClaudeBin,
 		Args:     args,
 		Env:      env,
-		Home:     c.cfg.Home,
+		RunAs:    c.cfg.RunAs,
 		WorkDir:  c.cfg.AgentDir,
 		JobDir:   job.Dir,
 		Timeout:  c.cfg.Timeout,

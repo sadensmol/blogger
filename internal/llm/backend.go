@@ -41,7 +41,7 @@ type Config struct {
 	ClaudeToken           string
 	LocalModel, OllamaURL string
 	AgentDir              string
-	Home                  string
+	RunAs                 RunAs
 	Timeout               time.Duration
 }
 

@@ -26,6 +26,8 @@ type Serve struct {
 	FetchEvery     time.Duration `env:"BLOGGER_FETCH_EVERY" envDefault:"3h"`
 	JobTimeout     time.Duration `env:"BLOGGER_JOB_TIMEOUT" envDefault:"15m"`
 	AgentDir       string        `env:"BLOGGER_AGENT_DIR" envDefault:"/app/agent"`
+	AgentUser      string        `env:"BLOGGER_AGENT_USER"`
+	JobsDir        string        `env:"BLOGGER_JOBS_DIR"` // empty: the jobs folder in BLOGGER_DATA_DIR
 	ClaudeBin      string        `env:"BLOGGER_CLAUDE_BIN" envDefault:"claude"`
 	CodexBin       string        `env:"BLOGGER_CODEX_BIN" envDefault:"codex"`
 	ClaudeToken    string        `env:"CLAUDE_CODE_OAUTH_TOKEN"`

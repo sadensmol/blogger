@@ -61,7 +61,7 @@ B 'umask 077; timeout 20 cat > ~/blogger/codex/auth.json' < ~/.config/blogger/co
 B 'timeout 10 stat -c "%a %u %n" ~/blogger/codex ~/blogger/codex/auth.json'
 ```
 
-The last check must show `700 1000 …/codex` and `600 1000 …/auth.json`.
+The last check must show `700 1000 …/codex` and `600 1000 …/auth.json`. In the container the bot runs as root and starts `claude` and `codex` as the user `blogger` (uid 1000). So the agents cannot read the bot's Slack tokens or its database, but they can use the Codex login.
 
 ## 5. Deploying to the board manually
 

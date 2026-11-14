@@ -92,10 +92,11 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	}
 	zerolog.SetGlobalLevel(level)
 	log.Ctx(ctx).Info().Msgf("blogger %s starting", version)
-	home, err := os.UserHomeDir()
+	runAs, err := llm.NewRunAs(cfg.AgentUser, os.Geteuid())
 	if err != nil {
-		return fmt.Errorf("cannot find the home folder: %w", err)
+		return fmt.Errorf("cannot use BLOGGER_AGENT_USER: %w", err)
 	}
+	log.Ctx(ctx).Info().Msgf("agents run as %s with home %s", runAs.Name, runAs.Home)
 
 	db, err := repository.Open(ctx, filepath.Join(cfg.DataDir, dbFileName))
 	if err != nil {
@@ -143,13 +144,17 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 		LocalModel:  cfg.LocalModel,
 		OllamaURL:   cfg.OllamaURL,
 		AgentDir:    cfg.AgentDir,
-		Home:        home,
+		RunAs:       runAs,
 		Timeout:     cfg.JobTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("cannot use BLOGGER_BACKENDS: %w", err)
 	}
-	runner := llm.NewRunner(backends, filepath.Join(cfg.DataDir, jobsDirName))
+	jobsDir := cfg.JobsDir
+	if jobsDir == "" {
+		jobsDir = filepath.Join(cfg.DataDir, jobsDirName)
+	}
+	runner := llm.NewRunner(backends, jobsDir, runAs)
 
 	slackHTTP := &http.Client{Timeout: slackTimeout}
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken), slack.OptionHTTPClient(slackHTTP))

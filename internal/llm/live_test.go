@@ -27,7 +27,7 @@ func liveRunner(t *testing.T, backend llm.Backend) *llm.Runner {
 
 	agentDir, err := filepath.Abs("../../agent")
 	require.NoError(t, err)
-	home, err := os.UserHomeDir()
+	runAs, err := llm.NewRunAs("", os.Geteuid())
 	require.NoError(t, err)
 
 	backends, err := llm.NewBackends(llm.Config{
@@ -35,11 +35,11 @@ func liveRunner(t *testing.T, backend llm.Backend) *llm.Runner {
 		ClaudeBin: "claude",
 		CodexBin:  "codex",
 		AgentDir:  agentDir,
-		Home:      home,
+		RunAs:     runAs,
 		Timeout:   10 * time.Minute,
 	})
 	require.NoError(t, err)
-	return llm.NewRunner(backends, t.TempDir())
+	return llm.NewRunner(backends, t.TempDir(), runAs)
 }
 
 func liveCandidates() []domain.Article {

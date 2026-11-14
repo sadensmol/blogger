@@ -24,8 +24,11 @@ RUN curl -fsSL https://claude.ai/install.sh | bash -s ${CLAUDE_VERSION}
 USER root
 COPY --from=build /out/blogger /usr/local/bin/blogger
 COPY agent /app/agent
-RUN mkdir -p /data /home/blogger/.codex && chown blogger:blogger /data /home/blogger/.codex
-ENV BLOGGER_DATA_DIR=/data PATH=/home/blogger/.local/bin:$PATH
-USER blogger
+# The bot runs as root and starts the agents as blogger, so an agent cannot read
+# the bot's environment (the Slack tokens) or the database in /data.
+RUN install -d -m 0700 /data \
+ && install -d -m 0700 -o blogger -g blogger /home/blogger/.codex /home/blogger/jobs
+ENV BLOGGER_DATA_DIR=/data BLOGGER_JOBS_DIR=/home/blogger/jobs BLOGGER_AGENT_USER=blogger \
+    PATH=/home/blogger/.local/bin:$PATH
 ENTRYPOINT ["blogger"]
 CMD ["serve"]

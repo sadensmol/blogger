@@ -58,7 +58,7 @@ func (s *DiscoveryTestSuite) discovery(order ...llm.Backend) *usecase.Discovery 
 		ClaudeBin:  s.agents.ClaudeBin,
 		CodexBin:   s.agents.CodexBin,
 		LocalModel: "qwen3:4b",
-		Home:       s.agents.Home,
+		RunAs:      llm.RunAs{Home: s.agents.Home},
 		AgentDir:   s.T().TempDir(),
 		Timeout:    10 * time.Second,
 	})
@@ -67,7 +67,7 @@ func (s *DiscoveryTestSuite) discovery(order ...llm.Backend) *usecase.Discovery 
 		Sources: service.NewSource(repository.NewSource(s.DB), nil, s.Clock.Now),
 		Feeds:   feed.NewClient(5*time.Second, feed.WithLoopbackAllowed()),
 		Runs:    service.NewRuns(repository.NewRun(s.DB), s.Clock.Now),
-		LLM:     llm.NewRunner(backends, s.T().TempDir()),
+		LLM:     llm.NewRunner(backends, s.T().TempDir(), llm.RunAs{}),
 	})
 }
 

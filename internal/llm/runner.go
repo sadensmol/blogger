@@ -30,10 +30,12 @@ var schemas embed.FS
 type Runner struct {
 	backends []IBackend
 	jobsDir  string
+	runAs    RunAs
 }
 
-func NewRunner(backends []IBackend, jobsDir string) *Runner {
-	return &Runner{backends: backends, jobsDir: jobsDir}
+// NewRunner takes runAs to give the job folders to the agent user.
+func NewRunner(backends []IBackend, jobsDir string, runAs RunAs) *Runner {
+	return &Runner{backends: backends, jobsDir: jobsDir, runAs: runAs}
 }
 
 type jobRequest struct {
@@ -95,6 +97,14 @@ func (r *Runner) newJob(req jobRequest) (Job, error) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, schemaFile), schema, 0o600); err != nil {
 		return Job{}, fmt.Errorf("cannot write job schema: %w", err)
+	}
+	// the agent reads the input and schema and writes its output into the job folder
+	if cred := r.runAs.Credential; cred != nil {
+		for _, path := range []string{r.jobsDir, dir, filepath.Join(dir, inputFile), filepath.Join(dir, schemaFile)} {
+			if err := os.Chown(path, int(cred.Uid), int(cred.Gid)); err != nil {
+				return Job{}, fmt.Errorf("cannot give %s to the agent user: %w", path, err)
+			}
+		}
 	}
 	return Job{Skill: req.skill, Dir: dir, NeedsWeb: req.needsWeb}, nil
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -20,7 +19,7 @@ type processData struct {
 	Bin      string
 	Args     []string
 	Env      []string // the program's own settings and login; HOME, PATH and USER are always set
-	Home     string
+	RunAs    RunAs
 	WorkDir  string
 	JobDir   string
 	Timeout  time.Duration
@@ -50,13 +49,13 @@ func runProcess(ctx context.Context, d processData) error {
 	cmd := exec.CommandContext(runCtx, d.Bin, d.Args...)
 	cmd.Dir = d.WorkDir
 	cmd.Env = append([]string{
-		fmt.Sprintf("HOME=%s", d.Home),
+		fmt.Sprintf("HOME=%s", d.RunAs.Home),
 		fmt.Sprintf("PATH=%s", os.Getenv("PATH")),
-		fmt.Sprintf("USER=%s", userName()),
+		fmt.Sprintf("USER=%s", d.RunAs.Name),
 	}, d.Env...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Credential: d.RunAs.Credential}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 	cmd.WaitDelay = killDelay
 
@@ -70,14 +69,6 @@ func runProcess(ctx context.Context, d processData) error {
 		return fmt.Errorf("%s failed: %w", d.Bin, err)
 	}
 	return nil
-}
-
-// userName is needed on macOS: claude finds its keychain login only when USER is set.
-func userName() string {
-	if u, err := user.Current(); err == nil {
-		return u.Username
-	}
-	return os.Getenv("USER")
 }
 
 // killGroup kills what is left of the program's process group: WaitDelay kills only the program itself.

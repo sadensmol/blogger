@@ -70,12 +70,12 @@ func NewApp(t *testing.T, d AppData) *App {
 		Order:     d.Backends,
 		ClaudeBin: d.Agents.ClaudeBin,
 		CodexBin:  d.Agents.CodexBin,
-		Home:      d.Agents.Home,
+		RunAs:     llm.RunAs{Home: d.Agents.Home},
 		AgentDir:  t.TempDir(),
 		Timeout:   agentTimeout,
 	})
 	require.NoError(t, err)
-	runner := llm.NewRunner(backends, t.TempDir())
+	runner := llm.NewRunner(backends, t.TempDir(), llm.RunAs{})
 	poster := slackpost.NewPoster(
 		slack.New("xoxb-test", slack.OptionAPIURL(fmt.Sprintf("%s/api/", d.SlackURL))),
 		&http.Client{Timeout: appTimeout},

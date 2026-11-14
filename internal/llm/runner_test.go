@@ -21,6 +21,7 @@ import (
 
 const (
 	ClaudeToken = "test-claude-token"
+	AgentName   = "agent"
 	LocalModel  = "qwen3:4b"
 	OllamaURL   = "http://ollama:11434/v1"
 
@@ -55,7 +56,7 @@ func newFakeAgents(t *testing.T, order ...llm.Backend) *fakeAgents {
 			ClaudeBin:   claudeBin,
 			CodexBin:    codexBin,
 			ClaudeToken: ClaudeToken,
-			Home:        home,
+			RunAs:       llm.RunAs{Name: AgentName, Home: home},
 			AgentDir:    t.TempDir(),
 			Timeout:     10 * time.Second,
 		},
@@ -67,7 +68,7 @@ func (f *fakeAgents) runner() *llm.Runner {
 
 	backends, err := llm.NewBackends(f.cfg)
 	require.NoError(f.t, err)
-	return llm.NewRunner(backends, f.jobsDir)
+	return llm.NewRunner(backends, f.jobsDir, llm.RunAs{})
 }
 
 func (f *fakeAgents) write(name, content string) {
