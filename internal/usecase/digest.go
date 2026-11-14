@@ -71,7 +71,7 @@ func NewDigest(d DigestData) *Digest {
 
 // Run takes kind digest-morning or digest-show.
 func (d *Digest) Run(ctx context.Context, kind domain.RunKind) error {
-	if err := d.withRun(ctx, kind, func(runID domain.RunID) (llm.Backend, error) {
+	if err := withRun(ctx, d.runs, kind, func(runID domain.RunID) (llm.Backend, error) {
 		return d.digest(ctx, kind, runID)
 	}); err != nil {
 		return fmt.Errorf("cannot post %s: %w", kind, err)
@@ -207,7 +207,7 @@ func (d *Digest) learnedProfile(ctx context.Context, sources []domain.Source) (d
 
 func (d *Digest) initProfile(ctx context.Context, current domain.Profile, sources []domain.Source) domain.Profile {
 	learned := current
-	if err := d.withRun(ctx, domain.RunKindProfileInit, func(domain.RunID) (llm.Backend, error) {
+	if err := withRun(ctx, d.runs, domain.RunKindProfileInit, func(domain.RunID) (llm.Backend, error) {
 		summaries := make([]llm.SourceSummary, 0, len(sources))
 		for _, src := range sources {
 			titles, err := d.articles.RecentTitles(ctx, src.ID, initTitlesPerBlog)
@@ -233,7 +233,7 @@ func (d *Digest) initProfile(ctx context.Context, current domain.Profile, source
 
 func (d *Digest) updateProfile(ctx context.Context, current domain.Profile) domain.Profile {
 	learned := current
-	if err := d.withRun(ctx, domain.RunKindProfileUpdate, func(domain.RunID) (llm.Backend, error) {
+	if err := withRun(ctx, d.runs, domain.RunKindProfileUpdate, func(domain.RunID) (llm.Backend, error) {
 		votes, err := d.votes.Recent(ctx, updateVotes)
 		if err != nil {
 			return "", fmt.Errorf("cannot read recent votes: %w", err)
@@ -251,20 +251,4 @@ func (d *Digest) updateProfile(ctx context.Context, current domain.Profile) doma
 		log.Ctx(ctx).Warn().Err(err).Msgf("digest goes on with the old interests file")
 	}
 	return learned
-}
-
-// withRun records work as one run of kind; the run fails when work returns an error.
-func (d *Digest) withRun(ctx context.Context, kind domain.RunKind, work func(domain.RunID) (llm.Backend, error)) error {
-	runID, err := d.runs.Start(ctx, kind)
-	if err != nil {
-		return fmt.Errorf("cannot start %s run: %w", kind, err)
-	}
-	backend, workErr := work(runID)
-	if err := d.runs.Finish(ctx, service.FinishData{ID: runID, Kind: kind, Backend: string(backend), Err: workErr}); err != nil {
-		log.Ctx(ctx).Error().Err(err).Msgf("cannot record the end of %s run %d", kind, runID)
-	}
-	if workErr != nil {
-		return fmt.Errorf("%s run %d failed: %w", kind, runID, workErr)
-	}
-	return nil
 }

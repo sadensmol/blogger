@@ -37,19 +37,17 @@ func NewDiscovery(d DiscoveryData) *Discovery {
 
 // Run returns how many trial blogs it added.
 func (d *Discovery) Run(ctx context.Context) (int, error) {
-	runID, err := d.runs.Start(ctx, domain.RunKindDiscovery)
-	if err != nil {
-		return 0, fmt.Errorf("cannot start %s run: %w", domain.RunKindDiscovery, err)
+	added := 0
+	if err := withRun(ctx, d.runs, domain.RunKindDiscovery, func(runID domain.RunID) (llm.Backend, error) {
+		n, backend, err := d.discover(ctx)
+		added = n
+		if err == nil {
+			log.Ctx(ctx).Info().Msgf("%s run %d added %d trial blogs", domain.RunKindDiscovery, runID, n)
+		}
+		return backend, err
+	}); err != nil {
+		return added, err
 	}
-	added, backend, workErr := d.discover(ctx)
-	finishErr := d.runs.Finish(ctx, service.FinishData{ID: runID, Kind: domain.RunKindDiscovery, Backend: string(backend), Err: workErr})
-	if finishErr != nil {
-		log.Ctx(ctx).Error().Err(finishErr).Msgf("cannot record the end of %s run %d", domain.RunKindDiscovery, runID)
-	}
-	if workErr != nil {
-		return added, fmt.Errorf("%s run %d failed: %w", domain.RunKindDiscovery, runID, workErr)
-	}
-	log.Ctx(ctx).Info().Msgf("%s run %d added %d trial blogs", domain.RunKindDiscovery, runID, added)
 	return added, nil
 }
 

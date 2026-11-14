@@ -21,6 +21,7 @@ const (
 	knownFeedPath = "/known.xml"
 	goodFeedFmt   = "/good-%d.xml"
 	deadFeedPath  = "/dead.xml"
+	emptyFeedPath = "/empty.xml"
 	goodReason    = "Writes about Go."
 	maxAdded      = 3
 )
@@ -112,6 +113,18 @@ func (s *DiscoveryTestSuite) TestDiscoveryAddsParsingFeedsAsTrial() {
 	result, err := s.runs.LatestByKind(s.Ctx, string(domain.RunKindDiscovery))
 	s.Require().NoError(err)
 	s.Equal(testsrepository.RunResult{Status: string(domain.RunStatusOK), Backend: string(llm.Claude)}, result)
+}
+
+func (s *DiscoveryTestSuite) TestDiscoverySkipsFeedWithoutItems() {
+	s.insertBlog(knownFeedPath)
+	s.feeds.Set(emptyFeedPath, "application/rss+xml", fmt.Sprintf(itemsFmt, ""))
+	s.answer(emptyFeedPath)
+
+	added, err := s.discovery(llm.Claude).Run(s.Ctx)
+
+	s.Require().NoError(err)
+	s.Zero(added)
+	s.Equal(1, s.CountRows("source"))
 }
 
 func (s *DiscoveryTestSuite) TestDiscoverySkipsRemovedBlog() {
