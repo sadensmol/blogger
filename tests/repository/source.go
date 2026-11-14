@@ -50,3 +50,26 @@ func (r *Source) MarkDeleted(ctx context.Context, id int64, now time.Time) error
 	_, err := r.db.ExecContext(ctx, `UPDATE source SET deleted_at = ? WHERE id = ?`, now.Format(time.RFC3339), id)
 	return err
 }
+
+func (r *Source) Status(ctx context.Context, id int64) (string, error) {
+	var status string
+	err := r.db.QueryRowContext(ctx, `SELECT status FROM source WHERE id = ?`, id).Scan(&status)
+	return status, err
+}
+
+func (r *Source) IDByFeedURL(ctx context.Context, feedURL string) (int64, error) {
+	var id int64
+	err := r.db.QueryRowContext(ctx, `SELECT id FROM source WHERE feed_url = ?`, feedURL).Scan(&id)
+	return id, err
+}
+
+func (r *Source) UpVotes(ctx context.Context, id int64) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM reaction r
+JOIN post p ON p.id = r.post_id
+JOIN article a ON a.id = p.article_id
+WHERE a.source_id = ? AND r.vote = 1 AND r.removed_at IS NULL`, id).Scan(&n)
+	return n, err
+}

@@ -125,15 +125,14 @@ func (s *SourcesTestSuite) TestAddPageWithoutFeedFails() {
 }
 
 func (s *SourcesTestSuite) TestRemoveThenAddAgainKeepsID() {
-	added, err := s.svc.Add(s.Ctx, s.feeds.URL()+blogPath)
-	s.Require().NoError(err)
+	id := s.insertSource(s.feeds.URL()+feedPath, blogTitle, domain.SourceActive)
 
-	_, err = s.svc.Remove(s.Ctx, strconv.FormatInt(int64(added.ID), 10))
+	_, err := s.svc.Remove(s.Ctx, strconv.FormatInt(id, 10))
 	s.Require().NoError(err)
 	again, err := s.svc.Add(s.Ctx, s.feeds.URL()+blogPath)
 
 	s.Require().NoError(err)
-	s.Equal(added.ID, again.ID)
+	s.Equal(domain.SourceID(id), again.ID)
 }
 
 func (s *SourcesTestSuite) TestPauseAndResumeByURL() {
@@ -172,9 +171,9 @@ func (s *SourcesTestSuite) TestImportDryRunChangesNothing() {
 		s.Require().NoError(err)
 		s.False(deletedAt.Valid)
 	}
-	listed, err := s.svc.List(s.Ctx)
+	status, err := s.sources.Status(s.Ctx, idA)
 	s.Require().NoError(err)
-	s.Equal(domain.SourceActive, listed[0].Status)
+	s.Equal(string(domain.SourceActive), status)
 }
 
 func (s *SourcesTestSuite) TestImportApplyKeepsVotesOfKeptSources() {
@@ -191,13 +190,17 @@ func (s *SourcesTestSuite) TestImportApplyKeepsVotesOfKeptSources() {
 	deletedAt, err := s.sources.DeletedAt(s.Ctx, idB)
 	s.Require().NoError(err)
 	s.True(deletedAt.Valid)
-	listed, err := s.svc.List(s.Ctx)
+	status, err := s.sources.Status(s.Ctx, idA)
 	s.Require().NoError(err)
-	s.Require().Len(listed, 2)
-	s.Equal(domain.SourceID(idA), listed[0].ID)
-	s.Equal(domain.SourcePaused, listed[0].Status)
-	s.Equal(2, listed[0].Votes.Up)
-	s.Equal(domain.URL(feedC), listed[1].FeedURL)
+	s.Equal(string(domain.SourcePaused), status)
+	upVotes, err := s.sources.UpVotes(s.Ctx, idA)
+	s.Require().NoError(err)
+	s.Equal(2, upVotes)
+	idC, err := s.sources.IDByFeedURL(s.Ctx, feedC)
+	s.Require().NoError(err)
+	cStatus, err := s.sources.Status(s.Ctx, idC)
+	s.Require().NoError(err)
+	s.Equal(string(domain.SourceActive), cStatus)
 }
 
 func (s *SourcesTestSuite) TestExportPrintsAllNotDeletedSources() {
@@ -233,16 +236,80 @@ func (s *SourcesTestSuite) TestExportWithoutBlogsPrintsEmptyList() {
 }
 
 func (s *SourcesTestSuite) TestImportRejectsUnknownStatus() {
-	s.insertSource(s.feeds.URL()+"/a.xml", "A", domain.SourceActive)
+	id := s.insertSource(s.feeds.URL()+"/a.xml", "A", domain.SourceActive)
 	file := fmt.Sprintf("sources:\n  - feed: %s/a.xml\n    status: sleeping\n", s.feeds.URL())
 
 	_, err := s.runCLI(file, "import", "--apply")
 
 	s.Require().Error(err)
 	s.Contains(err.Error(), "status")
-	listed, err := s.svc.List(s.Ctx)
+	status, err := s.sources.Status(s.Ctx, id)
 	s.Require().NoError(err)
-	s.Equal(domain.SourceActive, listed[0].Status)
+	s.Equal(string(domain.SourceActive), status)
+}
+
+func (s *SourcesTestSuite) TestImportRejectsDuplicateFeed() {
+	feedC := s.feeds.URL() + "/c.xml"
+	file := fmt.Sprintf("sources:\n  - feed: %s\n  - feed: %s\n", feedC, feedC)
+
+	_, err := s.runCLI(file, "import", "--apply")
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "more than once")
+	s.Equal(0, s.CountRows("source"))
+}
+
+func (s *SourcesTestSuite) TestImportKeepsStatusWhenEntryOmitsIt() {
+	feedA := s.feeds.URL() + "/a.xml"
+	id := s.insertSource(feedA, "A", domain.SourcePaused)
+
+	out, err := s.runCLI(fmt.Sprintf("sources:\n  - feed: %s\n", feedA), "import", "--apply")
+
+	s.Require().NoError(err)
+	s.Equal("No changes.\n", out)
+	status, err := s.sources.Status(s.Ctx, id)
+	s.Require().NoError(err)
+	s.Equal(string(domain.SourcePaused), status)
+}
+
+func (s *SourcesTestSuite) TestImportRejectsUnknownKey() {
+	file := fmt.Sprintf("sources:\n  - feed: %s/a.xml\n    statsu: paused\n", s.feeds.URL())
+
+	_, err := s.runCLI(file, "import", "--apply")
+
+	s.Require().Error(err)
+	s.Equal(0, s.CountRows("source"))
+}
+
+func (s *SourcesTestSuite) TestCLIAnswersForUserLevelFailures() {
+	const missingRef = "99"
+	out, err := s.runCLI("", "pause", missingRef)
+	s.Require().NoError(err)
+	s.Equal("No blog matches 99.\n", out)
+
+	s.insertSource(s.feeds.URL()+feedPath, blogTitle, domain.SourceActive)
+	out, err = s.runCLI("", "add", s.feeds.URL()+blogPath)
+	s.Require().NoError(err)
+	s.Equal("Already in the list.\n", out)
+
+	bare := tests.NewFakeFeeds()
+	defer bare.Close()
+	bare.Set("/bare", htmlType, "<html></html>")
+	out, err = s.runCLI("", "add", bare.URL()+"/bare")
+	s.Require().NoError(err)
+	s.Equal(fmt.Sprintf("No feed found at %s/bare.\n", bare.URL()), out)
+}
+
+func (s *SourcesTestSuite) TestCLIList() {
+	out, err := s.runCLI("", "list")
+	s.Require().NoError(err)
+	s.Equal("No blogs yet.\n", out)
+
+	id := s.insertSource(s.feeds.URL()+feedPath, blogTitle, domain.SourceActive)
+	s.insertUpVotes(id, userOne)
+	out, err = s.runCLI("", "list")
+	s.Require().NoError(err)
+	s.Equal(fmt.Sprintf("#%d active +1/-0 Example — %s%s\n", id, s.feeds.URL(), feedPath), out)
 }
 
 func (s *SourcesTestSuite) TestCLIPauseByID() {

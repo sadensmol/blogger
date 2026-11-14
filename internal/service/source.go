@@ -132,6 +132,9 @@ func (s *Source) Diff(ctx context.Context, wanted []domain.SourceSpec) (domain.S
 			spec.FeedURL = info.FeedURL
 			fallbackTitle = info.Title
 		}
+		if kept[spec.FeedURL] {
+			return domain.SourcesDiff{}, fmt.Errorf("cannot import: feed %s is listed more than once", spec.FeedURL)
+		}
 		kept[spec.FeedURL] = true
 
 		before, exists := currentByFeed[spec.FeedURL]
@@ -140,7 +143,7 @@ func (s *Source) Diff(ctx context.Context, wanted []domain.SourceSpec) (domain.S
 			continue
 		}
 		after := before
-		if spec.Status != before.Status {
+		if spec.Status != "" && spec.Status != before.Status {
 			after.Status = spec.Status
 			after.StatusChangedAt = s.now()
 		}
@@ -222,6 +225,9 @@ func newSourceFromSpec(spec domain.SourceSpec, fallbackTitle string) domain.Sour
 		Title:   spec.Title,
 		Status:  spec.Status,
 		Origin:  domain.OriginUser,
+	}
+	if src.Status == "" {
+		src.Status = domain.SourceActive
 	}
 	if src.SiteURL == "" {
 		src.SiteURL = spec.FeedURL

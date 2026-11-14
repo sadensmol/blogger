@@ -8,13 +8,15 @@ import (
 	"os"
 	"strings"
 
+	"github.com/rs/zerolog/log"
 	"go.yaml.in/yaml/v3"
 
+	controllertext "github.com/sadensmol/blogger/internal/controller/text"
 	"github.com/sadensmol/blogger/internal/domain"
 	"github.com/sadensmol/blogger/internal/service"
 )
 
-const sourcesUsage = "usage: blogger sources add <url> | remove|pause|resume <id-or-url> | export | import [--apply] [file]"
+const sourcesUsage = "usage: blogger sources add <url> | remove|pause|resume <id-or-url> | list | export | import [--apply] [file]"
 
 type SourcesData struct {
 	Svc  *service.Source
@@ -59,7 +61,7 @@ func (c controllerEntry) toSpec() (domain.SourceSpec, error) {
 	if c.URL == "" && c.Feed == "" {
 		return domain.SourceSpec{}, errors.New("entry has neither url nor feed")
 	}
-	spec := domain.SourceSpec{Title: c.Title, Status: domain.SourceActive}
+	spec := domain.SourceSpec{Title: c.Title}
 	if c.URL != "" {
 		pageURL, err := domain.ParseURL(c.URL)
 		if err != nil {
@@ -95,6 +97,8 @@ func Sources(ctx context.Context, d SourcesData) error {
 			return errors.New(sourcesUsage)
 		}
 		return runSourceAction(ctx, d, cmd, args[0])
+	case "list":
+		return listSources(ctx, d)
 	case "export":
 		return exportSources(ctx, d)
 	case "import":
@@ -105,36 +109,61 @@ func Sources(ctx context.Context, d SourcesData) error {
 }
 
 func runSourceAction(ctx context.Context, d SourcesData, cmd, ref string) error {
-	switch cmd {
-	case "add":
+	if cmd == "add" {
 		src, err := d.Svc.Add(ctx, ref)
 		if err != nil {
+			if answer, ok := controllertext.AddFailed(err, ref); ok {
+				return printLine(d.Out, answer)
+			}
 			return err
 		}
-		_, err = fmt.Fprintf(d.Out, "Added #%d %s (%s).\n", src.ID, src.Title, src.FeedURL)
-		return err
+		return printLine(d.Out, controllertext.SourceAdded(src))
+	}
+
+	var src domain.Source
+	var err error
+	var answer func(domain.Source) string
+	switch cmd {
 	case "remove":
-		src, err := d.Svc.Remove(ctx, ref)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintf(d.Out, "Removed #%d %s.\n", src.ID, src.Title)
-		return err
+		src, err = d.Svc.Remove(ctx, ref)
+		answer = controllertext.SourceRemoved
 	case "pause":
-		src, err := d.Svc.Pause(ctx, ref)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintf(d.Out, "Paused #%d %s.\n", src.ID, src.Title)
-		return err
+		src, err = d.Svc.Pause(ctx, ref)
+		answer = controllertext.SourcePaused
 	default:
-		src, err := d.Svc.Resume(ctx, ref)
-		if err != nil {
-			return err
+		src, err = d.Svc.Resume(ctx, ref)
+		answer = controllertext.SourceResumed
+	}
+	if err != nil {
+		if text, ok := controllertext.RefFailed(err, ref); ok {
+			return printLine(d.Out, text)
 		}
-		_, err = fmt.Fprintf(d.Out, "Resumed #%d %s.\n", src.ID, src.Title)
 		return err
 	}
+	return printLine(d.Out, answer(src))
+}
+
+func printLine(out io.Writer, line string) error {
+	if _, err := fmt.Fprintln(out, line); err != nil {
+		return fmt.Errorf("cannot write answer: %w", err)
+	}
+	return nil
+}
+
+func listSources(ctx context.Context, d SourcesData) error {
+	sources, err := d.Svc.List(ctx)
+	if err != nil {
+		return err
+	}
+	if len(sources) == 0 {
+		return printLine(d.Out, controllertext.NoBlogsYet)
+	}
+	for _, src := range sources {
+		if err := printLine(d.Out, controllertext.SourceLine(src)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func exportSources(ctx context.Context, d SourcesData) error {
@@ -158,23 +187,27 @@ func exportSources(ctx context.Context, d SourcesData) error {
 
 func importSources(ctx context.Context, d SourcesData, args []string) error {
 	apply := false
-	in := d.In
+	var paths []string
 	for _, arg := range args {
 		if arg == "--apply" {
 			apply = true
 			continue
 		}
-		f, err := os.Open(arg)
-		if err != nil {
-			return fmt.Errorf("cannot open %s: %w", arg, err)
-		}
-		defer f.Close()
-		in = f
+		paths = append(paths, arg)
+	}
+	if len(paths) > 1 {
+		return errors.New(sourcesUsage)
 	}
 
 	var file sourcesFile
-	if err := yaml.NewDecoder(in).Decode(&file); err != nil && !errors.Is(err, io.EOF) {
-		return fmt.Errorf("cannot read sources yaml: %w", err)
+	var err error
+	if len(paths) == 1 {
+		file, err = readSourcesFile(ctx, paths[0])
+	} else {
+		file, err = decodeSourcesFile(d.In)
+	}
+	if err != nil {
+		return err
 	}
 	wanted := make([]domain.SourceSpec, 0, len(file.Sources))
 	for i, entry := range file.Sources {
@@ -216,6 +249,29 @@ func importSources(ctx context.Context, d SourcesData, args []string) error {
 	fmt.Fprintf(&out, "Applied %d changes.\n", total)
 	_, err = io.WriteString(d.Out, out.String())
 	return err
+}
+
+func readSourcesFile(ctx context.Context, path string) (sourcesFile, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return sourcesFile{}, fmt.Errorf("cannot open %s: %w", path, err)
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			log.Ctx(ctx).Error().Err(err).Msgf("cannot close %s", path)
+		}
+	}()
+	return decodeSourcesFile(f)
+}
+
+func decodeSourcesFile(in io.Reader) (sourcesFile, error) {
+	var file sourcesFile
+	decoder := yaml.NewDecoder(in)
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&file); err != nil && !errors.Is(err, io.EOF) {
+		return sourcesFile{}, fmt.Errorf("cannot read sources yaml: %w", err)
+	}
+	return file, nil
 }
 
 func describeChange(c domain.SourceChange) string {

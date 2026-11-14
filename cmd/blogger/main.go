@@ -6,6 +6,8 @@ import (
 	"os"
 	_ "time/tzdata"
 
+	"github.com/rs/zerolog"
+
 	"github.com/sadensmol/blogger/internal/app"
 	"github.com/sadensmol/blogger/internal/config"
 )
@@ -33,7 +35,8 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
-		if err := app.SourcesCLI(context.Background(), cfg, args[1:]); err != nil {
+		logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+		if err := app.SourcesCLI(logger.WithContext(context.Background()), cfg, args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
