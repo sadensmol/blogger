@@ -25,7 +25,7 @@ const (
 
 type Job struct {
 	Skill    Skill
-	Dir      string // the job folder: input.json, schema.json, output.json, stdout.log, stderr.log
+	Dir      string // the job folder: input.json, schema.json, stdout.log, stderr.log, out/output.json
 	NeedsWeb bool
 }
 

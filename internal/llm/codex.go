@@ -40,7 +40,7 @@ func (c *CodexBackend) login() []string {
 
 // answer puts flags before the prompt; the prompt stays the last argument.
 func (c *CodexBackend) answer(ctx context.Context, job Job, flags, login []string) ([]byte, error) {
-	output := filepath.Join(job.Dir, outputFile)
+	output := filepath.Join(job.Dir, outDirName, outputFile)
 	if err := os.Remove(output); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("cannot remove old output: %w", err)
 	}
@@ -68,7 +68,7 @@ func (c *CodexBackend) answer(ctx context.Context, job Job, flags, login []strin
 		return nil, err
 	}
 
-	raw, err := os.ReadFile(output)
+	raw, err := readAgentFile(ctx, output)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read codex output: %w", err)
 	}

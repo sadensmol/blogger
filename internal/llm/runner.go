@@ -17,6 +17,7 @@ import (
 const (
 	inputFile  = "input.json"
 	schemaFile = "schema.json"
+	outDirName = "out" // the only folder of a job that the agent user can write
 	outputFile = "output.json"
 	stdoutFile = "stdout.log"
 	stderrFile = "stderr.log"
@@ -33,7 +34,8 @@ type Runner struct {
 	runAs    RunAs
 }
 
-// NewRunner takes runAs to give the job folders to the agent user.
+// NewRunner takes runAs to give the out folder of each job to the agent user.
+// jobsDir must not be writable by the agent user: root works in the job folders.
 func NewRunner(backends []IBackend, jobsDir string, runAs RunAs) *Runner {
 	return &Runner{backends: backends, jobsDir: jobsDir, runAs: runAs}
 }
@@ -88,22 +90,26 @@ func (r *Runner) newJob(req jobRequest) (Job, error) {
 		return Job{}, fmt.Errorf("cannot encode %s input: %w", req.skill, err)
 	}
 
+	if err := os.MkdirAll(r.jobsDir, 0o711); err != nil {
+		return Job{}, fmt.Errorf("cannot create jobs folder: %w", err)
+	}
 	dir := filepath.Join(r.jobsDir, fmt.Sprintf("%d-%s", time.Now().UnixNano(), req.skill))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.Mkdir(dir, 0o755); err != nil {
 		return Job{}, fmt.Errorf("cannot create job folder: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, inputFile), input, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, inputFile), input, 0o644); err != nil {
 		return Job{}, fmt.Errorf("cannot write job input: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, schemaFile), schema, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, schemaFile), schema, 0o644); err != nil {
 		return Job{}, fmt.Errorf("cannot write job schema: %w", err)
 	}
-	// the agent reads the input and schema and writes its output into the job folder
+	out := filepath.Join(dir, outDirName)
+	if err := os.Mkdir(out, 0o700); err != nil {
+		return Job{}, fmt.Errorf("cannot create job out folder: %w", err)
+	}
 	if cred := r.runAs.Credential; cred != nil {
-		for _, path := range []string{r.jobsDir, dir, filepath.Join(dir, inputFile), filepath.Join(dir, schemaFile)} {
-			if err := os.Chown(path, int(cred.Uid), int(cred.Gid)); err != nil {
-				return Job{}, fmt.Errorf("cannot give %s to the agent user: %w", path, err)
-			}
+		if err := handOver(out, cred); err != nil {
+			return Job{}, err
 		}
 	}
 	return Job{Skill: req.skill, Dir: dir, NeedsWeb: req.needsWeb}, nil

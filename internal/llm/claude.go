@@ -69,7 +69,7 @@ func (c *ClaudeBackend) Answer(ctx context.Context, job Job) ([]byte, error) {
 		return nil, err
 	}
 
-	raw, err := os.ReadFile(filepath.Join(job.Dir, stdoutFile))
+	raw, err := readAgentFile(ctx, filepath.Join(job.Dir, stdoutFile))
 	if err != nil {
 		return nil, fmt.Errorf("cannot read claude output: %w", err)
 	}

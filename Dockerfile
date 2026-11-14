@@ -26,9 +26,11 @@ COPY --from=build /out/blogger /usr/local/bin/blogger
 COPY agent /app/agent
 # The bot runs as root and starts the agents as blogger, so an agent cannot read
 # the bot's environment (the Slack tokens) or the database in /data.
+# The jobs folder is root's and outside the agent home: the agent cannot rename or replace a job.
 RUN install -d -m 0700 /data \
- && install -d -m 0700 -o blogger -g blogger /home/blogger/.codex /home/blogger/jobs
-ENV BLOGGER_DATA_DIR=/data BLOGGER_JOBS_DIR=/home/blogger/jobs BLOGGER_AGENT_USER=blogger \
+ && install -d -m 0711 /var/lib/blogger /var/lib/blogger/jobs \
+ && install -d -m 0700 -o blogger -g blogger /home/blogger/.codex
+ENV BLOGGER_DATA_DIR=/data BLOGGER_JOBS_DIR=/var/lib/blogger/jobs BLOGGER_AGENT_USER=blogger \
     PATH=/home/blogger/.local/bin:$PATH
 ENTRYPOINT ["blogger"]
 CMD ["serve"]
