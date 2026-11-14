@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	migrationsCount = 11
+	migrationsCount = 12
 	feedURL         = "https://example.com/feed"
 	unknownSourceID = 999
 	userOne         = "U1"
@@ -132,6 +132,51 @@ func (s *StoreTestSuite) TestOptionalPublishedMigrationForgetsFetchTimeDates() {
 	}, stored)
 }
 
+func (s *StoreTestSuite) TestManyPostsMigrationKeepsPostsAndVotes() {
+	const lastVersionWithOnePostPerArticle = 11
+	path := filepath.Join(s.T().TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	s.Require().NoError(err)
+	migrations, err := fs.Sub(blogdb.Migrations, "migrations")
+	s.Require().NoError(err)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, old, migrations)
+	s.Require().NoError(err)
+	_, err = provider.UpTo(s.Ctx, lastVersionWithOnePostPerArticle)
+	s.Require().NoError(err)
+	sourceID, err := testsrepository.NewSource(old).Insert(s.Ctx, testsrepository.SourceRow{FeedURL: feedURL, Status: string(domain.SourceActive)}, s.Clock.Now())
+	s.Require().NoError(err)
+	articleID, err := testsrepository.NewArticle(old).Insert(s.Ctx, testsrepository.ArticleRow{
+		SourceID: sourceID, URL: "https://example.com/a", PublishedAt: s.Clock.Now(), Now: s.Clock.Now(),
+	})
+	s.Require().NoError(err)
+	runID, err := testsrepository.NewRun(old).Insert(s.Ctx, string(domain.RunKindDigestShow), string(domain.RunStatusOK), s.Clock.Now())
+	s.Require().NoError(err)
+	postID, err := testsrepository.NewPost(old).Insert(s.Ctx, articleID, runID, s.Clock.Now())
+	s.Require().NoError(err)
+	s.Require().NoError(testsrepository.NewReaction(old).Insert(s.Ctx, testsrepository.ReactionRow{
+		PostID: postID, UserID: userOne, Vote: int(domain.VoteUp), CreatedAt: s.Clock.Now(),
+	}))
+	s.Require().NoError(old.Close())
+
+	migrated, err := repository.Open(s.Ctx, path)
+	s.Require().NoError(err)
+	defer func() { s.Require().NoError(migrated.Close()) }()
+
+	up, err := testsrepository.NewSource(migrated).UpVotes(s.Ctx, sourceID)
+	s.Require().NoError(err)
+	s.Equal(1, up)
+	var violations int
+	s.Require().NoError(migrated.QueryRowContext(s.Ctx, `SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&violations))
+	s.Equal(0, violations)
+	_, err = testsrepository.NewPost(migrated).InsertMessage(s.Ctx, testsrepository.PostRow{
+		ArticleID: articleID, RunID: runID, MessageTS: "repeat", Now: s.Clock.Now(),
+	})
+	s.Require().NoError(err)
+	messages, err := testsrepository.NewPost(migrated).MessagesByURL(s.Ctx, "https://example.com/a")
+	s.Require().NoError(err)
+	s.Len(messages, 2)
+}
+
 func (s *StoreTestSuite) TestForeignKeysAreOn() {
 	_, err := s.articles.Insert(s.Ctx, testsrepository.ArticleRow{
 		SourceID: unknownSourceID, URL: "https://example.com/a", PublishedAt: s.Clock.Now(), Now: s.Clock.Now(),
@@ -142,7 +187,7 @@ func (s *StoreTestSuite) TestForeignKeysAreOn() {
 	s.Equal(sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY, sqliteErr.Code())
 }
 
-func (s *StoreTestSuite) TestSecondPostForSameArticleFails() {
+func (s *StoreTestSuite) TestSecondPostForSameArticleIsStored() {
 	sourceID := s.insertSource(feedURL, domain.SourceActive)
 	articleID := s.insertArticle(sourceID, "https://example.com/a", s.Clock.Now())
 	runID := s.insertRun(domain.RunStatusRunning)
@@ -151,8 +196,8 @@ func (s *StoreTestSuite) TestSecondPostForSameArticleFails() {
 
 	_, err := repository.NewPost(s.DB).Create(s.Ctx, post, s.Clock.Now())
 
-	s.Error(err)
-	s.Equal(1, s.CountRows("post"))
+	s.Require().NoError(err)
+	s.Equal(2, s.CountRows("post"))
 }
 
 func (s *StoreTestSuite) TestCreateRevivesDeletedSource() {
@@ -199,7 +244,7 @@ func (s *StoreTestSuite) TestArticleDuplicateURLIgnored() {
 	s.Equal(1, s.CountRows("article"))
 }
 
-func (s *StoreTestSuite) TestListNotPostedSkipsPausedDeletedPostedAndOld() {
+func (s *StoreTestSuite) TestListNotVotedSkipsPausedDeletedJustPostedAndOld() {
 	const (
 		activeNewURL  = "https://example.com/active-new"
 		trialNewURL   = "https://example.com/trial-new"
@@ -224,7 +269,11 @@ func (s *StoreTestSuite) TestListNotPostedSkipsPausedDeletedPostedAndOld() {
 	posted := s.insertArticle(active, "https://example.com/posted", now.Add(-otherArticleAge))
 	s.insertPost(posted, s.insertRun(domain.RunStatusOK))
 
-	articles, err := repository.NewArticle(s.DB).ListNotPostedOfActiveOrTrialPublishedAfter(s.Ctx, now.Add(-maxAge))
+	articles, err := repository.NewArticle(s.DB).ListNotVotedOfActiveOrTrialPublishedAfter(s.Ctx, repository.NotVotedFilter{
+		PublishedAfter:   now.Add(-maxAge),
+		LastPostedBefore: now.Add(-tests.RepeatAfter),
+		MaxPosts:         tests.RepeatMax,
+	})
 
 	s.Require().NoError(err)
 	urls := make([]domain.URL, 0, len(articles))

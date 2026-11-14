@@ -15,6 +15,7 @@ import (
 
 	"github.com/sadensmol/blogger/internal/domain"
 	"github.com/sadensmol/blogger/internal/llm"
+	"github.com/sadensmol/blogger/internal/service"
 	"github.com/sadensmol/blogger/internal/usecase"
 	"github.com/sadensmol/blogger/tests"
 	testsrepository "github.com/sadensmol/blogger/tests/repository"
@@ -54,6 +55,7 @@ type DigestTestSuite struct {
 	runs        *testsrepository.Run
 	versions    *testsrepository.ProfileVersion
 	digest      *usecase.Digest
+	votes       *service.Votes
 }
 
 func TestDigestTestSuite(t *testing.T) {
@@ -75,7 +77,7 @@ func (s *DigestTestSuite) SetupTest() {
 
 	location, err := time.LoadLocation("Europe/Berlin")
 	s.Require().NoError(err)
-	s.digest = tests.NewApp(s.T(), tests.AppData{
+	app := tests.NewApp(s.T(), tests.AppData{
 		DB:          s.DB,
 		Now:         s.Clock.Now,
 		Agents:      s.agents,
@@ -85,7 +87,9 @@ func (s *DigestTestSuite) SetupTest() {
 		ProfilePath: s.profilePath,
 		Location:    location,
 		DigestSize:  digestSize,
-	}).Digest
+	})
+	s.digest = app.Digest
+	s.votes = app.Votes
 }
 
 func writeLearnedProfile(t *testing.T) string {
@@ -153,6 +157,44 @@ func (s *DigestTestSuite) pickCandidates() []string {
 		urls = append(urls, c.URL)
 	}
 	return urls
+}
+
+func (s *DigestTestSuite) pickShown() map[string]int {
+	var input struct {
+		Candidates []struct {
+			URL   string `json:"url"`
+			Shown int    `json:"shown"`
+		} `json:"candidates"`
+	}
+	s.Require().NoError(json.Unmarshal(s.agents.Input(llm.Claude, llm.SkillPickArticles), &input))
+	shown := make(map[string]int, len(input.Candidates))
+	for _, c := range input.Candidates {
+		shown[c.URL] = c.Shown
+	}
+	return shown
+}
+
+func (s *DigestTestSuite) insertArticle(sourceID int64, name string, publishedAt time.Time) int64 {
+	id, err := s.articles.Insert(s.Ctx, testsrepository.ArticleRow{
+		SourceID: sourceID, URL: s.articleURL(name), PublishedAt: publishedAt, Now: s.Clock.Now(),
+	})
+	s.Require().NoError(err)
+	return id
+}
+
+func (s *DigestTestSuite) insertPostsAgo(articleID int64, ages ...time.Duration) []int64 {
+	ids := make([]int64, 0, len(ages))
+	for _, age := range ages {
+		postedAt := s.Clock.Now().Add(-age)
+		runID, err := s.runs.Insert(s.Ctx, string(domain.RunKindDigestShow), string(domain.RunStatusOK), postedAt)
+		s.Require().NoError(err)
+		id, err := s.posts.InsertMessage(s.Ctx, testsrepository.PostRow{
+			ArticleID: articleID, RunID: runID, MessageTS: fmt.Sprintf("ts-%d-%d", articleID, postedAt.Unix()), Now: postedAt,
+		})
+		s.Require().NoError(err)
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 func (s *DigestTestSuite) replyTexts() []string {
@@ -592,4 +634,143 @@ func (s *DigestTestSuite) TestRejectedPickCanBePickedAgain() {
 	s.Contains(s.pickCandidates(), s.articleURL("a"))
 	s.Equal(1, s.CountRows("post"))
 	s.Equal(0, s.postsWithoutMessage())
+}
+
+func (s *DigestTestSuite) offersUnvotedArticleAgain(kind domain.RunKind) {
+	const name = "unvoted"
+	sourceID := s.addBlog()
+	s.learnedProfile()
+	articleID := s.insertArticle(sourceID, name, s.Clock.Now().Add(-tests.RepeatAfter-2*time.Hour))
+	s.insertPostsAgo(articleID, tests.RepeatAfter+time.Hour)
+	s.answerPicks(name)
+
+	err := s.digest.Run(s.Ctx, kind)
+
+	s.Require().NoError(err)
+	s.Equal(map[string]int{s.articleURL(name): 1}, s.pickShown())
+	messages, err := s.posts.MessagesByURL(s.Ctx, s.articleURL(name))
+	s.Require().NoError(err)
+	s.Len(messages, 2)
+}
+
+func (s *DigestTestSuite) TestShowOffersUnvotedArticleAgainAfterAWeek() {
+	s.offersUnvotedArticleAgain(domain.RunKindDigestShow)
+}
+
+func (s *DigestTestSuite) TestMorningOffersUnvotedArticleAgainAfterAWeek() {
+	s.offersUnvotedArticleAgain(domain.RunKindDigestMorning)
+}
+
+func (s *DigestTestSuite) TestVotedArticleNeverComesBack() {
+	cases := []struct {
+		name     string
+		vote     domain.Vote
+		removed  bool
+		comeBack bool
+	}{
+		{name: "up vote", vote: domain.VoteUp},
+		{name: "down vote", vote: domain.VoteDown},
+		{name: "removed up vote", vote: domain.VoteUp, removed: true, comeBack: true},
+	}
+	sourceID := s.addBlog()
+	s.learnedProfile()
+	for i, tt := range cases {
+		s.Run(tt.name, func() {
+			voted, fresh := fmt.Sprintf("voted-%d", i), fmt.Sprintf("fresh-%d", i)
+			articleID := s.insertArticle(sourceID, voted, s.Clock.Now().Add(-time.Hour))
+			s.insertArticle(sourceID, fresh, s.Clock.Now().Add(-time.Hour))
+			postIDs := s.insertPostsAgo(articleID, tests.RepeatAfter+time.Hour)
+			s.Require().NoError(s.reactions.Insert(s.Ctx, testsrepository.ReactionRow{
+				PostID: postIDs[0], UserID: "U1", Vote: int(tt.vote), Removed: tt.removed, CreatedAt: s.Clock.Now().Add(-time.Hour),
+			}))
+			s.answerPicks(fresh)
+
+			err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+			s.Require().NoError(err)
+			s.Contains(s.pickCandidates(), s.articleURL(fresh))
+			if tt.comeBack {
+				s.Contains(s.pickCandidates(), s.articleURL(voted))
+				return
+			}
+			s.NotContains(s.pickCandidates(), s.articleURL(voted))
+		})
+	}
+}
+
+func (s *DigestTestSuite) TestArticleComesBackUntilPostedThreeTimes() {
+	const (
+		twice  = "twice"
+		thrice = "thrice"
+		fresh  = "fresh"
+	)
+	sourceID := s.addBlog()
+	s.learnedProfile()
+	s.insertPostsAgo(s.insertArticle(sourceID, twice, s.Clock.Now().Add(-time.Hour)), 3*tests.RepeatAfter, 2*tests.RepeatAfter)
+	s.insertPostsAgo(s.insertArticle(sourceID, thrice, s.Clock.Now().Add(-time.Hour)), 4*tests.RepeatAfter, 3*tests.RepeatAfter, 2*tests.RepeatAfter)
+	s.insertArticle(sourceID, fresh, s.Clock.Now().Add(-time.Hour))
+	s.answerPicks(fresh)
+
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	s.Equal(map[string]int{s.articleURL(twice): 2, s.articleURL(fresh): 0}, s.pickShown())
+}
+
+func (s *DigestTestSuite) TestArticlePostedTwoDaysAgoWaits() {
+	sourceID := s.addBlog()
+	s.learnedProfile()
+	s.insertPostsAgo(s.insertArticle(sourceID, "recent", s.Clock.Now().Add(-time.Hour)), 2*24*time.Hour)
+
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	s.Equal([]string{noUnreadLine}, s.slack.Posted())
+	s.Empty(s.agents.Args(llm.Claude))
+}
+
+func (s *DigestTestSuite) TestUnvotedArticleOutsideHistoryNeverComesBack() {
+	sourceID := s.addBlog()
+	s.learnedProfile()
+	s.insertPostsAgo(s.insertArticle(sourceID, "ancient", s.Clock.Now().Add(-tests.HistoryWindow-time.Hour)), tests.RepeatAfter+time.Hour)
+
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	s.Equal([]string{noUnreadLine}, s.slack.Posted())
+	s.Empty(s.agents.Args(llm.Claude))
+}
+
+func (s *DigestTestSuite) repeatThenVoteOn(post int) {
+	sourceID := s.addBlog("a")
+	s.learnedProfile()
+	s.answerPicks("a")
+	s.Require().NoError(s.digest.Run(s.Ctx, domain.RunKindDigestShow))
+	s.Clock.Advance(tests.RepeatAfter + time.Hour)
+	s.Require().NoError(s.digest.Run(s.Ctx, domain.RunKindDigestShow))
+	s.Require().Equal(map[string]int{s.articleURL("a"): 1}, s.pickShown())
+	messages, err := s.posts.MessagesByURL(s.Ctx, s.articleURL("a"))
+	s.Require().NoError(err)
+	s.Require().Len(messages, 2)
+	s.Require().NoError(s.votes.Add(s.Ctx, domain.ReactionEvent{
+		ChannelID: digestChannelID, MessageTS: messages[post], UserID: "U1", Vote: domain.VoteUp,
+	}))
+	s.Clock.Advance(tests.RepeatAfter + time.Hour)
+
+	err = s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	posted := s.slack.Posted()
+	s.Equal(noUnreadLine, posted[len(posted)-1])
+	up, err := s.sources.UpVotes(s.Ctx, sourceID)
+	s.Require().NoError(err)
+	s.Equal(1, up)
+}
+
+func (s *DigestTestSuite) TestVoteOnFirstPostOfRepeatedArticleEndsRepeats() {
+	s.repeatThenVoteOn(0)
+}
+
+func (s *DigestTestSuite) TestVoteOnSecondPostOfRepeatedArticleEndsRepeats() {
+	s.repeatThenVoteOn(1)
 }

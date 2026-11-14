@@ -25,6 +25,8 @@ type Serve struct {
 	Backends       string        `env:"BLOGGER_BACKENDS" envDefault:"claude,codex,codex-oss"`
 	FetchEvery     time.Duration `env:"BLOGGER_FETCH_EVERY" envDefault:"3h"`
 	HistoryDays    int           `env:"BLOGGER_HISTORY_DAYS" envDefault:"365"`
+	RepeatAfter    time.Duration `env:"BLOGGER_REPEAT_AFTER" envDefault:"168h"`
+	RepeatMax      int           `env:"BLOGGER_REPEAT_MAX" envDefault:"3"`
 	JobTimeout     time.Duration `env:"BLOGGER_JOB_TIMEOUT" envDefault:"15m"`
 	AgentDir       string        `env:"BLOGGER_AGENT_DIR" envDefault:"/app/agent"`
 	AgentUser      string        `env:"BLOGGER_AGENT_USER"`
@@ -66,6 +68,10 @@ func (s Serve) validate() error {
 		return fmt.Errorf("BLOGGER_DIGEST_SIZE must be above zero, got %d", s.DigestSize)
 	case s.HistoryDays <= 0:
 		return fmt.Errorf("BLOGGER_HISTORY_DAYS must be above zero, got %d", s.HistoryDays)
+	case s.RepeatAfter <= 0:
+		return fmt.Errorf("BLOGGER_REPEAT_AFTER must be above zero, got %s", s.RepeatAfter)
+	case s.RepeatMax <= 0:
+		return fmt.Errorf("BLOGGER_REPEAT_MAX must be above zero, got %d", s.RepeatMax)
 	case strings.TrimSpace(s.ClaudeBin) == "":
 		return errors.New("BLOGGER_CLAUDE_BIN must not be empty")
 	case strings.TrimSpace(s.CodexBin) == "":

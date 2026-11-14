@@ -131,6 +131,8 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 		Feeds:   feeds,
 		Runs:    runs,
 		History: time.Duration(cfg.HistoryDays) * 24 * time.Hour,
+		RepeatAfter: cfg.RepeatAfter,
+		RepeatMax:   cfg.RepeatMax,
 		Now:     time.Now,
 	})
 

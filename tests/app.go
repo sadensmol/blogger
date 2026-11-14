@@ -22,6 +22,8 @@ const (
 	appTimeout    = 5 * time.Second
 	agentTimeout  = 10 * time.Second
 	HistoryWindow = 365 * 24 * time.Hour
+	RepeatAfter   = 7 * 24 * time.Hour
+	RepeatMax     = 3
 )
 
 type AppData struct {
@@ -67,6 +69,8 @@ func NewApp(t *testing.T, d AppData) *App {
 		Feeds:   feeds,
 		Runs:    runs,
 		History: HistoryWindow,
+		RepeatAfter: RepeatAfter,
+		RepeatMax:   RepeatMax,
 		Now:     d.Now,
 	})
 	backends, err := llm.NewBackends(llm.Config{

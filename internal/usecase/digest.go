@@ -186,7 +186,7 @@ func (d *Digest) digest(ctx context.Context, kind domain.RunKind, runID domain.R
 	return backend, nil
 }
 
-// postPick stores the post before it posts: an article that may be in slack is never picked again.
+// postPick stores the post before it posts: an article that may be in slack counts as posted, so it repeats only when due.
 func (d *Digest) postPick(ctx context.Context, runID domain.RunID, a domain.Article, pick domain.Pick) error {
 	postID, err := d.posts.Create(ctx, domain.Post{ArticleID: a.ID, RunID: runID, Pick: pick})
 	if err != nil {
@@ -197,10 +197,10 @@ func (d *Digest) postPick(ctx context.Context, runID domain.RunID, a domain.Arti
 	// a ts with an error means the message is in slack and only a reaction failed
 	if err != nil && ts == "" {
 		if !slackpost.NotPosted(err) {
-			return fmt.Errorf("cannot post article %d, post %d keeps it out of later digests: %w", a.ID, postID, err)
+			return fmt.Errorf("cannot post article %d, post %d keeps it out of digests until it is due again: %w", a.ID, postID, err)
 		}
 		if delErr := d.posts.Delete(context.WithoutCancel(ctx), postID); delErr != nil {
-			log.Ctx(ctx).Error().Err(delErr).Msgf("article %d stays out of later digests: cannot remove post %d that slack rejected", a.ID, postID)
+			log.Ctx(ctx).Error().Err(delErr).Msgf("article %d stays out of digests until it is due again: cannot remove post %d that slack rejected", a.ID, postID)
 		}
 		return fmt.Errorf("cannot post article %d: %w", a.ID, err)
 	}

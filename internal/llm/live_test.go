@@ -46,7 +46,7 @@ func liveCandidates() []domain.Article {
 	published := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
 	return []domain.Article{
 		{ID: 1, SourceID: 1, SourceTitle: "Go Notes", URL: "https://go.example.com/sqlite-wal", Title: "Tuning SQLite WAL mode in a Go service", Excerpt: "How we set busy_timeout and WAL checkpoints for a pure-Go SQLite driver.", PublishedAt: published},
-		{ID: 2, SourceID: 2, SourceTitle: "DB Weekly", URL: "https://db.example.com/postgres-indexes", Title: "When a Postgres partial index beats a full one", Excerpt: "Three real queries and their plans before and after a partial index.", PublishedAt: published},
+		{ID: 2, SourceID: 2, SourceTitle: "DB Weekly", URL: "https://db.example.com/postgres-indexes", Title: "When a Postgres partial index beats a full one", Excerpt: "Three real queries and their plans before and after a partial index.", PublishedAt: published, Shown: 1},
 		{ID: 3, SourceID: 3, SourceTitle: "Garden Life", URL: "https://garden.example.com/tomatoes", Title: "Ten tips for growing tomatoes on a balcony", Excerpt: "Pots, soil and watering for city tomatoes.", PublishedAt: published},
 		{ID: 4, SourceID: 4, SourceTitle: "Style Daily", URL: "https://style.example.com/autumn-coats", Title: "The autumn coats everyone wears this year", Excerpt: "Colours and cuts of the season.", PublishedAt: published},
 	}

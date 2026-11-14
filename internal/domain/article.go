@@ -15,6 +15,7 @@ type Article struct {
 	Title       string
 	Excerpt     string
 	PublishedAt time.Time // zero: the date is unknown
+	Shown       int       // times it was posted before; filled by the candidate finders
 }
 
 func newestFirst(a, b Article) int {

@@ -9,11 +9,12 @@ description: Choose the blog articles that fit the user best from a list of cand
    - `min`: the fewest picks you must return. It is 0 or 1.
    - `max`: the most picks you may return.
    - `interests_md`: the user's interests file.
-   - `candidates`: a list of articles. Each has `url`, `title`, `source`, `published` and `excerpt`. `published` is empty when the date is unknown.
+   - `candidates`: a list of articles. Each has `url`, `title`, `source`, `published`, `excerpt` and `shown`. `published` is empty when the date is unknown. `shown` is how many times the user saw the article before without a vote. It is 0 for a new article.
 2. Judge each candidate against the interests file:
    - First against `## My notes`. The user wrote these notes. They are the strongest rule.
    - Then against `## Learned`. These lines come from the user's past votes.
    - Older articles are fine. Judge by interest, not by date.
+   - When two articles fit about equally well, prefer the one with `shown` 0. An article with `shown` above 0 is fine when it fits the interests well.
 3. Choose between `min` and `max` articles:
    - When `min` is 0: choose fewer when few articles fit. Choose none when nothing fits. Never fill the list with weak matches.
    - When `min` is 1: the user asked for something to read now. Always choose at least one: the best candidate, even when it fits only a little. Add more only when they fit well.

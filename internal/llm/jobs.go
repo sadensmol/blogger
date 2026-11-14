@@ -33,6 +33,7 @@ type candidateJSON struct {
 	Source    string `json:"source"`
 	Published string `json:"published"`
 	Excerpt   string `json:"excerpt"`
+	Shown     int    `json:"shown"`
 }
 
 type domainArticle domain.Article
@@ -43,6 +44,7 @@ func (a domainArticle) toCandidateJSON() candidateJSON {
 		Title:   a.Title,
 		Source:  a.SourceTitle,
 		Excerpt: a.Excerpt,
+		Shown:   a.Shown,
 	}
 	if !a.PublishedAt.IsZero() {
 		candidate.Published = a.PublishedAt.UTC().Format(time.RFC3339)

@@ -33,6 +33,8 @@ type Articles struct {
 	feeds   *feed.Client
 	runs    *Runs
 	history time.Duration
+	repeatAfter time.Duration
+	repeatMax   int
 	now     func() time.Time
 
 	mu   sync.Mutex
@@ -45,7 +47,10 @@ type ArticlesData struct {
 	Feeds   *feed.Client
 	Runs    *Runs
 	History time.Duration // how far back an article is still worth reading
-	Now     func() time.Time
+	// an article the owner never voted on comes back RepeatAfter its last post, until it was posted RepeatMax times
+	RepeatAfter time.Duration
+	RepeatMax   int
+	Now         func() time.Time
 }
 
 func NewArticles(d ArticlesData) *Articles {
@@ -55,6 +60,8 @@ func NewArticles(d ArticlesData) *Articles {
 		feeds:   d.Feeds,
 		runs:    d.Runs,
 		history: d.History,
+		repeatAfter: d.RepeatAfter,
+		repeatMax:   d.RepeatMax,
 		now:     d.Now,
 		busy:    map[domain.SourceID]bool{},
 	}
@@ -129,18 +136,27 @@ func (a *Articles) Backfill(ctx context.Context) (int, error) {
 	return created, nil
 }
 
+// Candidates takes the not posted articles and the unvoted ones due again of the last two weeks.
 func (a *Articles) Candidates(ctx context.Context) ([]domain.Article, error) {
-	articles, err := a.repo.ListNotPostedOfActiveOrTrialPublishedAfter(ctx, a.now().Add(-min(candidateWindow, a.history)))
+	articles, err := a.repo.ListNotVotedOfActiveOrTrialPublishedAfter(ctx, repository.NotVotedFilter{
+		PublishedAfter:   a.now().Add(-min(candidateWindow, a.history)),
+		LastPostedBefore: a.now().Add(-a.repeatAfter),
+		MaxPosts:         a.repeatMax,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("cannot list candidates: %w", err)
 	}
 	return domain.CutCandidates(articles, candidatesTotal, candidatesPerBlog), nil
 }
 
-// CandidatesOverHistory takes the not posted articles of the whole history, spread over time so older ones come up too.
-// Undated articles come last.
+// CandidatesOverHistory takes the not posted articles and the unvoted ones due again of the whole history,
+// spread over time so older ones come up too. Undated articles come last.
 func (a *Articles) CandidatesOverHistory(ctx context.Context) ([]domain.Article, error) {
-	articles, err := a.repo.ListNotPostedOfActiveOrTrialPublishedAfterOrUndated(ctx, a.now().Add(-a.history))
+	articles, err := a.repo.ListNotVotedOfActiveOrTrialPublishedAfterOrUndated(ctx, repository.NotVotedFilter{
+		PublishedAfter:   a.now().Add(-a.history),
+		LastPostedBefore: a.now().Add(-a.repeatAfter),
+		MaxPosts:         a.repeatMax,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("cannot list candidates over history: %w", err)
 	}
