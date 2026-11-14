@@ -19,10 +19,14 @@ services:
     restart: unless-stopped
     entrypoint: ["sh", "./updater.sh"]
     working_dir: ${PWD}
+    environment:
+      DOCKER_CONFIG: /docker-config
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Same path inside and outside, so compose bind mounts resolve on the host.
       - ${PWD}:${PWD}:ro
+      # The board user's ghcr.io login: the image package is private.
+      - ${HOME}/.docker:/docker-config:ro
     logging:
       driver: json-file
       options: {max-size: "1m", max-file: "2"}

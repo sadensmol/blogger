@@ -89,9 +89,20 @@ CI uses only the built-in `GITHUB_TOKEN`. It needs no other secret.
 ### One-time steps for you
 
 1. Create the public GitHub repo `sadensmol/blogger`. Tell Claude when it may push. Claude does not push before your go.
-2. Wait for the first `image` job on `main` to finish.
-3. Make the package public, so the board can pull it without a login. Open the package page on GitHub, then Package settings, then Change visibility. Guide: https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility
-4. Run `make deploy-ci`. It copies the compose file and `updater.sh` to the board and starts both containers.
+2. Wait for the first `image` job on `main` to finish. The image package stays private.
+3. Create a read token for the board. Open https://github.com/settings/tokens and choose **Generate new token (classic)**. Select only the scope `read:packages`. Set an expiry date.
+4. Save the token on the Mac: `umask 077; pbpaste > ~/.config/blogger/ghcr-token`, then `chmod 600 ~/.config/blogger/ghcr-token`. Tell Claude when the file is ready.
+5. Claude logs the board in to ghcr.io. The token goes through stdin and is never printed:
+
+   ```bash
+   B 'timeout 30 docker login ghcr.io -u sadensmol --password-stdin' < ~/.config/blogger/ghcr-token
+   B 'timeout 10 sh -c "grep -c \"ghcr.io\" ~/.docker/config.json; grep -c credsStore ~/.docker/config.json"'
+   ```
+
+   The check must print `1` and then `0`. A `credsStore` keeps the login in a helper that the updater container cannot use.
+6. Run `make deploy-ci`. It stops when the board has no ghcr.io login. It copies the compose file and `updater.sh` to the board and starts both containers.
+
+When the token expires, the updater logs `pull failed`. Make a new token and repeat steps 3 to 5.
 
 ### How the board updates
 
@@ -100,7 +111,7 @@ The `updater` container reads `~/blogger/image.tag` every 5 minutes.
 - No file, or the content is `latest`: it pulls `ghcr.io/sadensmol/blogger:latest`. It restarts `blogger` only when the pulled image differs from the running one.
 - Any other content, for example `local-abc1234`: a manual deploy pinned the board. The updater does nothing. It logs one line when this state starts.
 
-The updater never reads `.env` and never restarts itself. It works in the folder it starts from, which is `~/blogger`. Always run `docker compose` from `~/blogger`.
+The updater pulls with the board user's ghcr.io login. It mounts `~/.docker` read-only and points `DOCKER_CONFIG` at it. The updater never reads `.env` and never restarts itself. It works in the folder it starts from, which is `~/blogger`. Always run `docker compose` from `~/blogger`.
 
 ### Build on the Mac and install by hand
 
