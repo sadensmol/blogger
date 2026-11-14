@@ -1,12 +1,12 @@
 # Blogger setup guide
 
-This guide lists every manual step. Never paste a secret value in chat, a log or the repo. This guide names keys only.
+This guide lists every manual step for one concrete setup: a Mac for local tests and a Jetson board in Docker. For a general setup from scratch, read the [README](../README.md) or run `/sadensmol-blogger-setup` in Claude Code. Never paste a secret value in chat, a log or the repo. This guide names keys only.
 
 ## 1. Overview
 
 - **Mac, local test mode.** You run the real bot on the Mac. It uses a separate dev Slack app and the channel `#news-dev`. Use it to test and debug.
 - **Board.** The Jetson `lockbox-nv` runs the bot in one Docker container. It uses the production Slack app and the channel `#news`.
-- **Images.** `make deploy-local` builds an image on the Mac and installs it on the board. CI will build the same image later (section 6).
+- **Images.** `make deploy-local` builds an image on the Mac and installs it on the board. CI builds the same image (section 6).
 - **Secrets.** Secrets live in `~/.config/blogger/` on the Mac and in `~/blogger/.env` and `~/blogger/codex/` on the board. They never enter the repo.
 
 Use two Slack apps. Two Socket Mode connections of one app split the events. Then the board and the Mac each miss some events.
@@ -14,7 +14,7 @@ Use two Slack apps. Two Socket Mode connections of one app split the events. The
 ## 2. Local test mode (do this first)
 
 1. Create a private folder: `mkdir -p ~/.config/blogger && chmod 700 ~/.config/blogger`.
-2. Open https://api.slack.com/apps and choose **Create New App**. Create it from an app manifest. Pick the workspace `sadensmol`. Paste the content of `deploy/slack-manifest-dev.yaml`. Help: https://docs.slack.dev/app-manifests/configuring-apps-with-app-manifests
+2. Open https://api.slack.com/apps and choose **Create New App**. Create it from an app manifest. Pick your workspace. Paste the content of `deploy/slack-manifest-dev.yaml` on the **YAML** tab. If the editor is in JSON mode, switch it to YAML or paste the manifest as JSON. Help: https://docs.slack.dev/app-manifests/configuring-apps-with-app-manifests
 3. Check that **Socket Mode** is on. The manifest turns it on. Help: https://docs.slack.dev/apis/events-api/using-socket-mode
 4. Under **Basic Information → App-Level Tokens**, generate a token with the scope `connections:write`. You need it for `SLACK_APP_TOKEN`.
 5. Under **Install App**, install the app to the workspace. Copy the Bot User OAuth Token. You need it for `SLACK_BOT_TOKEN`. Help: https://docs.slack.dev/authentication/tokens
@@ -32,7 +32,7 @@ Use two Slack apps. Two Socket Mode connections of one app split the events. The
 **Update an app from the manifest.** A new release can change a manifest, for example to add a command or to turn on interactivity. Do this for each app whose manifest changed (`deploy/slack-manifest-dev.yaml` for the dev app, `deploy/slack-manifest.yaml` for the board app):
 
 1. Open https://api.slack.com/apps and choose the app.
-2. Open **App Manifest**. Replace the content with the content of the manifest file. Save.
+2. Open **App Manifest**. Replace the content with the content of the manifest file (switch the editor to YAML, or paste it as JSON). Save.
 3. If Slack asks you to reinstall the app, reinstall it.
 
 ## 3. Managing blogs and notes
@@ -72,7 +72,7 @@ The last check must show `700 1000 …/codex` and `600 1000 …/auth.json`. In t
 
 ## 5. Deploying to the board manually
 
-The board changes only through Docker images.
+The board changes only through Docker images. The deploy scripts reach the board as `BLOGGER_BOARD_HOST`; set it to `<user>@<board-host>` for another board.
 
 1. `make deploy-local` builds the image on the Mac for `linux/arm64`. It sends the image to the board over SSH. It pins the board to the tag `local-<sha>`. Use it for a change that CI has not built yet.
 2. `make deploy-ci` points the board back at the CI images (`:latest`) and starts them.
