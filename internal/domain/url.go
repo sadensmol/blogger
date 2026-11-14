@@ -1,0 +1,57 @@
+package domain
+
+import (
+	"fmt"
+	"net"
+	"net/url"
+	"strings"
+)
+
+type URL string
+
+func ParseURL(raw string) (URL, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("cannot parse url %q: %w", raw, err)
+	}
+
+	u.Scheme = strings.ToLower(u.Scheme)
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return "", fmt.Errorf("cannot use url %q: scheme must be http or https", raw)
+	}
+	if u.Hostname() == "" {
+		return "", fmt.Errorf("cannot use url %q: host is empty", raw)
+	}
+
+	host := strings.ToLower(u.Hostname())
+	port := u.Port()
+	if port == "80" && u.Scheme == "http" || port == "443" && u.Scheme == "https" {
+		port = ""
+	}
+	if port != "" {
+		host = net.JoinHostPort(host, port)
+	} else if strings.Contains(host, ":") {
+		host = fmt.Sprintf("[%s]", host)
+	}
+	u.Host = host
+
+	u.Fragment = ""
+	u.RawFragment = ""
+
+	u.Path = strings.TrimRight(u.Path, "/")
+	u.RawPath = strings.TrimRight(u.RawPath, "/")
+	if u.Path == "" {
+		u.Path = "/"
+		u.RawPath = ""
+	}
+
+	query := u.Query()
+	for key := range query {
+		if strings.HasPrefix(key, "utm_") || key == "fbclid" || key == "gclid" || key == "ref" {
+			query.Del(key)
+		}
+	}
+	u.RawQuery = query.Encode()
+
+	return URL(u.String()), nil
+}
