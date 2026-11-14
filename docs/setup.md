@@ -79,6 +79,6 @@ Coming next: GitHub Actions builds `ghcr.io/sadensmol/blogger`. The board update
 ## 7. Troubleshooting
 
 - **Logs.** Run `ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 20 docker logs --tail 100 blogger'`.
-- **Wrong board clock.** Run `ssh … 'timeout 10 timedatectl show -p NTP -p NTPSynchronized -p Timezone'`. Expect `NTP=yes` and `NTPSynchronized=yes`. Compare `date -u +%s` on the Mac with the same command on the board. The difference must be 5 or less. The bot does not post a digest when the clock is wrong.
+- **Wrong board clock.** While the board date is before 2026-01-01, the bot waits. It does no fetch and posts no digest. It logs `board clock is wrong`. Run `ssh … 'timeout 10 timedatectl show -p NTP -p NTPSynchronized -p Timezone'`. Expect `NTP=yes` and `NTPSynchronized=yes`.
 - **"Busy right now".** One agent job runs at a time. Wait for the running job to finish, then try again.
 - **`make run-local` fails with `invalid_auth`.** A Slack token in `dev.env` is wrong. Check the app-level token (`xapp-`) and the bot token (`xoxb-`).

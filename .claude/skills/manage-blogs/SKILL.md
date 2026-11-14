@@ -15,16 +15,16 @@ This skill is the only way the user changes the `## My notes` part of the intere
 ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local '<board command>'
 ```
 
-**Local test mode.** When the user says they work locally, run the same `blogger` arguments on the Mac, from the repo root, with `go run ./cmd/blogger` and the dev env file. Source the env file in a subshell, as shown. Never print it:
+**Local test mode.** When the user says they work locally, run the same `blogger` arguments on the Mac, from the repo root, with `go run ./cmd/blogger` and the dev env file. Source the env file in a subshell, then set the same data and agent folders as `make run-local`. Never print the env file:
 
 ```bash
-(set -a; . ~/.config/blogger/dev.env; set +a; go run ./cmd/blogger sources export)
+(set -a; . ~/.config/blogger/dev.env; set +a; export BLOGGER_DATA_DIR="$PWD/.scratch/dev-data" BLOGGER_AGENT_DIR="$PWD/agent"; go run ./cmd/blogger sources export)
 ```
 
 A command that reads stdin gets the file through a redirect outside the subshell:
 
 ```bash
-(set -a; . ~/.config/blogger/dev.env; set +a; go run ./cmd/blogger sources import -) < .scratch/sources.yaml
+(set -a; . ~/.config/blogger/dev.env; set +a; export BLOGGER_DATA_DIR="$PWD/.scratch/dev-data" BLOGGER_AGENT_DIR="$PWD/agent"; go run ./cmd/blogger sources import -) < .scratch/sources.yaml
 ```
 
 ## Blogs
