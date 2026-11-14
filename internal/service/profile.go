@@ -44,15 +44,13 @@ func (p *Profile) Current(ctx context.Context) (domain.Profile, error) {
 }
 
 func (p *Profile) Save(ctx context.Context, next domain.Profile, change domain.ProfileChange) error {
-	file, err := p.readFile()
-	switch {
-	case err == nil:
-		next, err = next.WithNotesFrom(file)
-		if err != nil {
-			return fmt.Errorf("cannot keep user notes: %w", err)
-		}
-	case !errors.Is(err, fs.ErrNotExist):
+	current, err := p.Current(ctx)
+	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		return err
+	}
+	next, err = next.WithNotesFrom(current)
+	if err != nil {
+		return fmt.Errorf("cannot keep user notes: %w", err)
 	}
 	return p.store(ctx, next, change)
 }
@@ -99,6 +97,9 @@ func (p *Profile) writeFile(ctx context.Context, profile domain.Profile) (err er
 	defer func() {
 		if err == nil {
 			return
+		}
+		if closeErr := tmp.Close(); closeErr != nil && !errors.Is(closeErr, os.ErrClosed) {
+			log.Ctx(ctx).Error().Err(closeErr).Msgf("cannot close temp file %s", tmp.Name())
 		}
 		if removeErr := os.Remove(tmp.Name()); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) {
 			log.Ctx(ctx).Error().Err(removeErr).Msgf("cannot remove temp file %s", tmp.Name())

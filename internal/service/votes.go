@@ -70,7 +70,12 @@ func (v *Votes) apply(
 	if err := write(ctx, e, post.ID, v.now()); err != nil {
 		return fmt.Errorf("cannot store vote: %w", err)
 	}
-	if _, err := v.sources.ApplyStatusRule(ctx, post.SourceID); err != nil {
+	_, err = v.sources.ApplyStatusRule(ctx, post.SourceID)
+	if errors.Is(err, domain.ErrNotFound) {
+		log.Ctx(ctx).Debug().Msgf("skipping status rule: blog %d of post %d is removed", post.SourceID, post.ID)
+		return nil
+	}
+	if err != nil {
 		return fmt.Errorf("cannot update blog %d after vote: %w", post.SourceID, err)
 	}
 	return nil

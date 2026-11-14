@@ -21,3 +21,9 @@ VALUES ('content', ?, ?, ?)`,
 		change, now.Format(time.RFC3339), now.Format(time.RFC3339))
 	return err
 }
+
+func (r *ProfileVersion) LatestChange(ctx context.Context) (string, error) {
+	var change string
+	err := r.db.QueryRowContext(ctx, `SELECT change FROM profile_version ORDER BY id DESC LIMIT 1`).Scan(&change)
+	return change, err
+}

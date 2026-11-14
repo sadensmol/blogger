@@ -126,9 +126,34 @@ func (s *ProfileTestSuite) TestSetNotesReplacesOnlyNotes() {
 	s.Require().NoError(err)
 	s.Equal(domain.Profile(fmt.Sprintf(profileFmt, changedNotes, learnedText)), s.readFile())
 	s.Equal(1, s.CountRows("profile_version"))
-	var change string
-	s.Require().NoError(s.DB.QueryRowContext(s.Ctx, `SELECT change FROM profile_version`).Scan(&change))
+	change, err := s.versions.LatestChange(s.Ctx)
+	s.Require().NoError(err)
 	s.Equal(string(domain.ProfileNotes), change)
+}
+
+func (s *ProfileTestSuite) TestSaveWithoutFileOrVersionDropsLLMNotes() {
+	err := s.svc.Save(s.Ctx, domain.Profile(fmt.Sprintf(profileFmt, changedNotes, newLearned)), domain.ProfileInit)
+
+	s.Require().NoError(err)
+	s.Empty(s.readFile().Notes())
+	s.Equal(1, s.CountRows("profile_version"))
+}
+
+func (s *ProfileTestSuite) TestSaveWithoutFileUsesLatestVersionNotes() {
+	s.Require().NoError(s.svc.SetNotes(s.Ctx, userNotes))
+	s.Require().NoError(os.Remove(s.path))
+
+	err := s.svc.Save(s.Ctx, domain.Profile(fmt.Sprintf(profileFmt, changedNotes, newLearned)), domain.ProfileUpdate)
+
+	s.Require().NoError(err)
+	s.Equal(userNotes, s.readFile().Notes())
+}
+
+func (s *ProfileTestSuite) TestLastLearnedAtWithoutVersionsIsZero() {
+	at, err := s.svc.LastLearnedAt(s.Ctx)
+
+	s.Require().NoError(err)
+	s.True(at.IsZero())
 }
 
 func (s *ProfileTestSuite) TestSetNotesWithoutFileCreatesOne() {

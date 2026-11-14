@@ -73,3 +73,14 @@ JOIN article a ON a.id = p.article_id
 WHERE a.source_id = ? AND r.vote = 1 AND r.removed_at IS NULL`, id).Scan(&n)
 	return n, err
 }
+
+func (r *Source) DownVotes(ctx context.Context, id int64) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM reaction r
+JOIN post p ON p.id = r.post_id
+JOIN article a ON a.id = p.article_id
+WHERE a.source_id = ? AND r.vote = -1 AND r.removed_at IS NULL`, id).Scan(&n)
+	return n, err
+}

@@ -2,7 +2,6 @@ package tests_test
 
 import (
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -29,6 +28,7 @@ type FeedbackTestSuite struct {
 	articles *testsrepository.Article
 	runs     *testsrepository.Run
 	posts    *testsrepository.Post
+	reactions *testsrepository.Reaction
 	sourceSv *service.Source
 	votes    *service.Votes
 }
@@ -43,6 +43,7 @@ func (s *FeedbackTestSuite) SetupTest() {
 	s.articles = testsrepository.NewArticle(s.DB)
 	s.runs = testsrepository.NewRun(s.DB)
 	s.posts = testsrepository.NewPost(s.DB)
+	s.reactions = testsrepository.NewReaction(s.DB)
 	s.sourceSv = service.NewSource(repository.NewSource(s.DB), feed.NewClient(time.Second), s.Clock.Now)
 	s.votes = service.NewVotes(service.VotesData{
 		Reactions: repository.NewReaction(s.DB),
@@ -58,16 +59,16 @@ func (s *FeedbackTestSuite) insertSource(status domain.SourceStatus) int64 {
 	return id
 }
 
-func (s *FeedbackTestSuite) insertPost(sourceID int64, n int) domain.ReactionEvent {
+func (s *FeedbackTestSuite) insertPost(sourceID int64, n int) (int64, domain.ReactionEvent) {
 	articleID, err := s.articles.Insert(s.Ctx, testsrepository.ArticleRow{
 		SourceID: sourceID, URL: fmt.Sprintf("%s/article-%d", feedbackURL, n), PublishedAt: s.Clock.Now(), Now: s.Clock.Now(),
 	})
 	s.Require().NoError(err)
 	runID, err := s.runs.Insert(s.Ctx, string(domain.RunKindFetch), string(domain.RunStatusOK), s.Clock.Now())
 	s.Require().NoError(err)
-	_, err = s.posts.Insert(s.Ctx, articleID, runID, s.Clock.Now())
+	postID, err := s.posts.Insert(s.Ctx, articleID, runID, s.Clock.Now())
 	s.Require().NoError(err)
-	return domain.ReactionEvent{ChannelID: channelID, MessageTS: fmt.Sprintf("ts-%d", articleID), UserID: voterID}
+	return postID, domain.ReactionEvent{ChannelID: channelID, MessageTS: fmt.Sprintf("ts-%d", articleID), UserID: voterID}
 }
 
 func (s *FeedbackTestSuite) vote(event domain.ReactionEvent, v domain.Vote) {
@@ -75,16 +76,12 @@ func (s *FeedbackTestSuite) vote(event domain.ReactionEvent, v domain.Vote) {
 	s.Require().NoError(s.votes.Add(s.Ctx, event))
 }
 
-func (s *FeedbackTestSuite) sourceVotes(id int64) domain.Votes {
-	src, err := s.sourceSv.List(s.Ctx)
+func (s *FeedbackTestSuite) votesOf(id int64) (up, down int) {
+	up, err := s.sources.UpVotes(s.Ctx, id)
 	s.Require().NoError(err)
-	for _, candidate := range src {
-		if int64(candidate.ID) == id {
-			return candidate.Votes
-		}
-	}
-	s.FailNow("source not listed")
-	return domain.Votes{}
+	down, err = s.sources.DownVotes(s.Ctx, id)
+	s.Require().NoError(err)
+	return up, down
 }
 
 func (s *FeedbackTestSuite) status(id int64) string {
@@ -95,20 +92,25 @@ func (s *FeedbackTestSuite) status(id int64) string {
 
 func (s *FeedbackTestSuite) TestAddStoresUpVote() {
 	id := s.insertSource(domain.SourceActive)
+	_, event := s.insertPost(id, 1)
 
-	s.vote(s.insertPost(id, 1), domain.VoteUp)
+	s.vote(event, domain.VoteUp)
 
-	s.Equal(domain.Votes{Up: 1}, s.sourceVotes(id))
+	up, down := s.votesOf(id)
+	s.Equal(1, up)
+	s.Equal(0, down)
 }
 
 func (s *FeedbackTestSuite) TestBothThumbsOnOnePostCountPlusAndMinusOne() {
 	id := s.insertSource(domain.SourceActive)
-	event := s.insertPost(id, 1)
+	_, event := s.insertPost(id, 1)
 
 	s.vote(event, domain.VoteUp)
 	s.vote(event, domain.VoteDown)
 
-	s.Equal(domain.Votes{Up: 1, Down: 1}, s.sourceVotes(id))
+	up, down := s.votesOf(id)
+	s.Equal(1, up)
+	s.Equal(1, down)
 }
 
 func (s *FeedbackTestSuite) TestAddForUnknownMessageIsIgnored() {
@@ -121,7 +123,7 @@ func (s *FeedbackTestSuite) TestAddForUnknownMessageIsIgnored() {
 }
 
 func (s *FeedbackTestSuite) TestAddTwiceStoresOneRow() {
-	event := s.insertPost(s.insertSource(domain.SourceActive), 1)
+	_, event := s.insertPost(s.insertSource(domain.SourceActive), 1)
 
 	s.vote(event, domain.VoteUp)
 	s.vote(event, domain.VoteUp)
@@ -129,10 +131,24 @@ func (s *FeedbackTestSuite) TestAddTwiceStoresOneRow() {
 	s.Equal(1, s.CountRows("reaction"))
 }
 
+func (s *FeedbackTestSuite) TestAddForRemovedBlogStoresVoteWithoutError() {
+	id := s.insertSource(domain.SourceActive)
+	_, event := s.insertPost(id, 1)
+	s.Require().NoError(s.sources.MarkDeleted(s.Ctx, id, s.Clock.Now()))
+	event.Vote = domain.VoteUp
+
+	err := s.votes.Add(s.Ctx, event)
+
+	s.Require().NoError(err)
+	s.Equal(1, s.CountRows("reaction"))
+}
+
 func (s *FeedbackTestSuite) TestRemoveDropsVote() {
 	id := s.insertSource(domain.SourceActive)
-	event := s.insertPost(id, 1)
-	s.vote(event, domain.VoteUp)
+	postID, event := s.insertPost(id, 1)
+	s.Require().NoError(s.reactions.Insert(s.Ctx, testsrepository.ReactionRow{
+		PostID: postID, UserID: voterID, Vote: int(domain.VoteUp), CreatedAt: s.Clock.Now(),
+	}))
 	before := s.Clock.Now()
 	s.Clock.Advance(time.Minute)
 
@@ -142,7 +158,9 @@ func (s *FeedbackTestSuite) TestRemoveDropsVote() {
 
 	s.Require().NoError(err)
 	s.Require().NoError(changedErr)
-	s.Equal(domain.Votes{}, s.sourceVotes(id))
+	up, down := s.votesOf(id)
+	s.Equal(0, up)
+	s.Equal(0, down)
 	s.True(changed)
 }
 
@@ -150,7 +168,8 @@ func (s *FeedbackTestSuite) TestThirdNetDownVotePausesActiveSource() {
 	id := s.insertSource(domain.SourceActive)
 
 	for n := 1; n <= 3; n++ {
-		s.vote(s.insertPost(id, n), domain.VoteDown)
+		_, event := s.insertPost(id, n)
+		s.vote(event, domain.VoteDown)
 	}
 
 	s.Equal(string(domain.SourcePaused), s.status(id))
@@ -160,7 +179,8 @@ func (s *FeedbackTestSuite) TestTwoNetUpVotesPromoteTrialSource() {
 	id := s.insertSource(domain.SourceTrial)
 
 	for n := 1; n <= 2; n++ {
-		s.vote(s.insertPost(id, n), domain.VoteUp)
+		_, event := s.insertPost(id, n)
+		s.vote(event, domain.VoteUp)
 	}
 
 	s.Equal(string(domain.SourceActive), s.status(id))
@@ -169,15 +189,17 @@ func (s *FeedbackTestSuite) TestTwoNetUpVotesPromoteTrialSource() {
 func (s *FeedbackTestSuite) TestResumedSourceStartsFromZero() {
 	id := s.insertSource(domain.SourceActive)
 	for n := 1; n <= 3; n++ {
-		s.vote(s.insertPost(id, n), domain.VoteDown)
+		postID, _ := s.insertPost(id, n)
+		s.Require().NoError(s.reactions.Insert(s.Ctx, testsrepository.ReactionRow{
+			PostID: postID, UserID: voterID, Vote: int(domain.VoteDown), CreatedAt: s.Clock.Now(),
+		}))
 	}
-	s.Require().Equal(string(domain.SourcePaused), s.status(id))
 	s.Clock.Advance(time.Hour)
-	_, err := s.sourceSv.Resume(s.Ctx, strconv.FormatInt(id, 10))
-	s.Require().NoError(err)
+	s.Require().NoError(s.sources.SetStatusChangedAt(s.Ctx, id, s.Clock.Now()))
 	s.Clock.Advance(time.Hour)
+	_, event := s.insertPost(id, 4)
 
-	s.vote(s.insertPost(id, 4), domain.VoteDown)
+	s.vote(event, domain.VoteDown)
 
 	s.Equal(string(domain.SourceActive), s.status(id))
 }
