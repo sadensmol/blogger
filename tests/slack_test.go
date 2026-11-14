@@ -3,8 +3,6 @@ package tests_test
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -17,11 +15,7 @@ import (
 	"github.com/sadensmol/blogger/internal/config"
 	controllerslack "github.com/sadensmol/blogger/internal/controller/slack"
 	"github.com/sadensmol/blogger/internal/domain"
-	"github.com/sadensmol/blogger/internal/feed"
 	"github.com/sadensmol/blogger/internal/llm"
-	"github.com/sadensmol/blogger/internal/repository"
-	"github.com/sadensmol/blogger/internal/service"
-	"github.com/sadensmol/blogger/internal/slackpost"
 	"github.com/sadensmol/blogger/internal/usecase"
 	"github.com/sadensmol/blogger/tests"
 	testsrepository "github.com/sadensmol/blogger/tests/repository"
@@ -75,7 +69,8 @@ func (s *SlackTestSuite) SetupTest() {
 		"url": s.articleURL(), "description": "A post.", "topics": []string{"go"}, "reason": "Matches Go.",
 	}}})
 
-	jobs := s.newHandler()
+	var jobs *usecase.Jobs
+	s.handler, jobs = s.newHandlerAndJobs()
 	ctx, cancel := context.WithCancel(s.Ctx)
 	s.stopWorker = cancel
 	s.workerDone = make(chan struct{})
@@ -88,6 +83,7 @@ func (s *SlackTestSuite) SetupTest() {
 func (s *SlackTestSuite) TearDownTest() {
 	s.stopWorker()
 	<-s.workerDone
+	s.handler.Wait()
 	s.feeds.Close()
 	s.slack.Close()
 	s.Suite.TearDownTest()
@@ -97,70 +93,29 @@ func (s *SlackTestSuite) articleURL() string {
 	return fmt.Sprintf("%s/%s", s.feeds.URL(), slackArticle)
 }
 
-func (s *SlackTestSuite) newHandler() *usecase.Jobs {
-	profilePath := filepath.Join(s.T().TempDir(), "interests.md")
-	s.Require().NoError(os.WriteFile(profilePath, fmt.Appendf(nil, digestProfileFmt, digestNotes, digestLearned), 0o644))
-
-	feeds := feed.NewClient(5*time.Second, feed.WithLoopbackAllowed())
-	sourceSvc := service.NewSource(repository.NewSource(s.DB), feeds, s.Clock.Now)
-	runsSvc := service.NewRuns(repository.NewRun(s.DB), s.Clock.Now)
-	postsSvc := service.NewPosts(repository.NewPost(s.DB), s.Clock.Now)
-	votes := service.NewVotes(service.VotesData{
-		Reactions: repository.NewReaction(s.DB),
-		Posts:     postsSvc,
-		Sources:   sourceSvc,
-		Now:       s.Clock.Now,
+func (s *SlackTestSuite) newHandlerAndJobs() (*controllerslack.Handler, *usecase.Jobs) {
+	app := tests.NewApp(s.T(), tests.AppData{
+		DB:          s.DB,
+		Now:         s.Clock.Now,
+		Agents:      s.agents,
+		Backends:    []llm.Backend{llm.Claude},
+		SlackURL:    s.slack.URL,
+		ChannelID:   digestChannelID,
+		ProfilePath: writeLearnedProfile(s.T()),
+		Location:    time.UTC,
+		DigestSize:  digestSize,
 	})
-	backends, err := llm.NewBackends(llm.Config{
-		Order:     []llm.Backend{llm.Claude},
-		ClaudeBin: s.agents.ClaudeBin,
-		CodexBin:  s.agents.CodexBin,
-		Home:      s.agents.Home,
-		AgentDir:  s.T().TempDir(),
-		Timeout:   10 * time.Second,
-	})
-	s.Require().NoError(err)
-	runner := llm.NewRunner(backends, s.T().TempDir())
-	poster := slackpost.NewPoster(slack.New("xoxb-test", slack.OptionAPIURL(s.slack.URL+"/api/")), digestChannelID)
-
-	jobs := usecase.NewJobs(usecase.JobsData{
-		Digest: usecase.NewDigest(usecase.DigestData{
-			Articles: service.NewArticles(service.ArticlesData{
-				Sources: sourceSvc,
-				Repo:    repository.NewArticle(s.DB),
-				Feeds:   feeds,
-				Runs:    runsSvc,
-				Now:     s.Clock.Now,
-			}),
-			Sources:  sourceSvc,
-			Votes:    votes,
-			Profile:  service.NewProfile(profilePath, repository.NewProfileVersion(s.DB), s.Clock.Now),
-			Posts:    postsSvc,
-			Runs:     runsSvc,
-			LLM:      runner,
-			Poster:   poster,
-			Size:     digestSize,
-			Location: time.UTC,
-			Now:      s.Clock.Now,
-		}),
-		Discovery: usecase.NewDiscovery(usecase.DiscoveryData{
-			Sources: sourceSvc,
-			Feeds:   feeds,
-			Runs:    runsSvc,
-			LLM:     runner,
-		}),
-		Size: 3,
-	})
-	s.handler = controllerslack.NewHandler(controllerslack.HandlerData{
+	jobs := usecase.NewJobs(app.JobsData(3))
+	handler := controllerslack.NewHandler(controllerslack.HandlerData{
 		Jobs:       jobs,
-		Sources:    sourceSvc,
-		Votes:      votes,
-		Poster:     poster,
+		Sources:    app.Sources,
+		Votes:      app.Votes,
+		Poster:     app.Poster,
 		ChannelID:  digestChannelID,
 		OwnerID:    slackOwnerID,
 		Background: s.Ctx,
 	})
-	return jobs
+	return handler, jobs
 }
 
 func (s *SlackTestSuite) ownerCommand(command, text string) slack.SlashCommand {
@@ -203,12 +158,16 @@ func (s *SlackTestSuite) insertPost() (int64, string) {
 	return sourceID, fmt.Sprintf("ts-%d", articleID)
 }
 
-func (s *SlackTestSuite) react(userID, reaction, ts string) {
-	s.Require().NoError(s.handler.ReactionAdded(s.Ctx, &slackevents.ReactionAddedEvent{
-		User:     userID,
-		Reaction: reaction,
+func (s *SlackTestSuite) ownerThumbsUp(ts string) *slackevents.ReactionAddedEvent {
+	return &slackevents.ReactionAddedEvent{
+		User:     slackOwnerID,
+		Reaction: "+1",
 		Item:     slackevents.Item{Type: "message", Channel: digestChannelID, Timestamp: ts},
-	}))
+	}
+}
+
+func (s *SlackTestSuite) react(ev *slackevents.ReactionAddedEvent) {
+	s.Require().NoError(s.handler.ReactionAdded(s.Ctx, ev))
 }
 
 func (s *SlackTestSuite) runsOf(kind domain.RunKind) int {
@@ -264,7 +223,7 @@ func (s *SlackTestSuite) TestCommandFromAnotherUserIsRefused() {
 
 func (s *SlackTestSuite) TestBlogsListShowsVotes() {
 	_, ts := s.insertPost()
-	s.react(slackOwnerID, "+1", ts)
+	s.react(s.ownerThumbsUp(ts))
 
 	text := s.ack(s.ownerCommand("/blogs", "list"))
 
@@ -288,6 +247,12 @@ func (s *SlackTestSuite) TestBlogsRemoveUnknownRefIsEscaped() {
 	text := s.ack(s.ownerCommand("/blogs", "remove https://x.com/?a&b"))
 
 	s.Equal("No blog matches https://x.com/?a&amp;b.", text)
+}
+
+func (s *SlackTestSuite) TestBlogsRemoveUnparseableRefMatchesNoBlog() {
+	text := s.ack(s.ownerCommand("/blogs", "remove foo"))
+
+	s.Equal("No blog matches foo.", text)
 }
 
 func (s *SlackTestSuite) TestBlogsPauseAnswersInAck() {
@@ -315,16 +280,50 @@ func (s *SlackTestSuite) TestBlogsAddRepliesThroughResponseURL() {
 
 func (s *SlackTestSuite) TestReactionFromBotIsIgnored() {
 	_, ts := s.insertPost()
+	ev := s.ownerThumbsUp(ts)
+	ev.User = "UBOT"
 
-	s.react("UBOT", "+1", ts)
+	s.react(ev)
+
+	s.Equal(0, s.CountRows("reaction"))
+}
+
+func (s *SlackTestSuite) TestReactionFromAnotherUserIsIgnored() {
+	_, ts := s.insertPost()
+	ev := s.ownerThumbsUp(ts)
+	ev.User = "UOTHER"
+
+	s.react(ev)
+
+	s.Equal(0, s.CountRows("reaction"))
+}
+
+func (s *SlackTestSuite) TestReactionInAnotherChannelIsIgnored() {
+	_, ts := s.insertPost()
+	ev := s.ownerThumbsUp(ts)
+	ev.Item.Channel = "C2"
+
+	s.react(ev)
+
+	s.Equal(0, s.CountRows("reaction"))
+}
+
+func (s *SlackTestSuite) TestReactionOnFileIsIgnored() {
+	_, ts := s.insertPost()
+	ev := s.ownerThumbsUp(ts)
+	ev.Item.Type = "file"
+
+	s.react(ev)
 
 	s.Equal(0, s.CountRows("reaction"))
 }
 
 func (s *SlackTestSuite) TestSkinToneThumbsUpCounts() {
 	sourceID, ts := s.insertPost()
+	ev := s.ownerThumbsUp(ts)
+	ev.Reaction = "+1::skin-tone-4"
 
-	s.react(slackOwnerID, "+1::skin-tone-4", ts)
+	s.react(ev)
 
 	up, err := s.sources.UpVotes(s.Ctx, sourceID)
 	s.Require().NoError(err)
@@ -333,21 +332,20 @@ func (s *SlackTestSuite) TestSkinToneThumbsUpCounts() {
 
 func (s *SlackTestSuite) TestHeartIsIgnored() {
 	_, ts := s.insertPost()
+	ev := s.ownerThumbsUp(ts)
+	ev.Reaction = "heart"
 
-	s.react(slackOwnerID, "heart", ts)
+	s.react(ev)
 
 	s.Equal(0, s.CountRows("reaction"))
 }
 
 func (s *SlackTestSuite) TestOwnerReactionRemovedDropsVote() {
 	sourceID, ts := s.insertPost()
-	s.react(slackOwnerID, "+1", ts)
+	added := s.ownerThumbsUp(ts)
+	s.react(added)
 
-	err := s.handler.ReactionRemoved(s.Ctx, &slackevents.ReactionRemovedEvent{
-		User:     slackOwnerID,
-		Reaction: "+1",
-		Item:     slackevents.Item{Type: "message", Channel: digestChannelID, Timestamp: ts},
-	})
+	err := s.handler.ReactionRemoved(s.Ctx, (*slackevents.ReactionRemovedEvent)(added))
 
 	s.Require().NoError(err)
 	up, err := s.sources.UpVotes(s.Ctx, sourceID)

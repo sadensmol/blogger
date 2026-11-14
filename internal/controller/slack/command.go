@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -17,12 +18,10 @@ import (
 )
 
 const (
-	blogsUsage    = "usage: list | add <url> | remove <id|url> | pause <id|url> | resume <id|url>"
 	ownerOnlyText = "Only the owner can use this bot."
 	pickingText   = "Picking articles…"
 	onItsWayText  = "A digest is already on its way."
 	busyText      = "Busy right now, try again in a few minutes."
-	failedText    = "Something went wrong. See the logs."
 	addTimeout    = time.Minute
 )
 
@@ -72,6 +71,7 @@ type Handler struct {
 	channelID  string
 	ownerID    string
 	background context.Context
+	adds       sync.WaitGroup
 }
 
 func NewHandler(d HandlerData) *Handler {
@@ -121,23 +121,23 @@ func (h *Handler) show(ctx context.Context, cmd slack.SlashCommand) string {
 	case usecase.Busy:
 		return busyText
 	}
-	return failedText
+	return controllertext.Failed
 }
 
 func (h *Handler) blogs(ctx context.Context, cmd slack.SlashCommand) string {
 	c, err := ParseBlogsCommand(cmd.Text)
 	if err != nil {
 		log.Ctx(ctx).Debug().Err(err).Msgf("bad /blogs text %q", cmd.Text)
-		return slackpost.Escape(blogsUsage)
+		return slackpost.Escape(controllertext.BlogsUsage)
 	}
 	switch c.Action {
 	case "help":
-		return slackpost.Escape(blogsUsage)
+		return slackpost.Escape(controllertext.BlogsUsage)
 	case "list":
 		return h.listBlogs(ctx)
 	case "add":
 		h.addBlogLater(cmd.ResponseURL, c.Arg)
-		return fmt.Sprintf("Checking %s…", slackpost.Escape(c.Arg))
+		return slackpost.Escape(controllertext.Checking(c.Arg))
 	default:
 		return h.changeBlog(ctx, c)
 	}
@@ -147,7 +147,7 @@ func (h *Handler) listBlogs(ctx context.Context) string {
 	sources, err := h.sources.List(ctx)
 	if err != nil {
 		log.Ctx(ctx).Error().Err(err).Msg("/blogs list failed")
-		return failedText
+		return controllertext.Failed
 	}
 	if len(sources) == 0 {
 		return controllertext.NoBlogsYet
@@ -159,7 +159,6 @@ func (h *Handler) listBlogs(ctx context.Context) string {
 	return strings.Join(lines, "\n")
 }
 
-// changeBlog runs remove, pause or resume.
 func (h *Handler) changeBlog(ctx context.Context, c BlogsCommand) string {
 	var src domain.Source
 	var err error
@@ -180,15 +179,19 @@ func (h *Handler) changeBlog(ctx context.Context, c BlogsCommand) string {
 			return slackpost.Escape(text)
 		}
 		log.Ctx(ctx).Error().Err(err).Msgf("/blogs %s %s failed", c.Action, c.Arg)
-		return failedText
+		return controllertext.Failed
 	}
 	log.Ctx(ctx).Info().Msgf("/blogs %s: blog %d", c.Action, src.ID)
 	return slackpost.Escape(answer(src))
 }
 
-// addBlogLater resolves the feed after the ack and answers through the command's response URL.
+// Wait returns when every /blogs add started so far has answered.
+func (h *Handler) Wait() {
+	h.adds.Wait()
+}
+
 func (h *Handler) addBlogLater(responseURL, rawURL string) {
-	go func() {
+	h.adds.Go(func() {
 		ctx, cancel := context.WithTimeout(h.background, addTimeout)
 		defer cancel()
 
@@ -200,10 +203,10 @@ func (h *Handler) addBlogLater(responseURL, rawURL string) {
 			text = controllertext.SourceAdded(src)
 		case !known:
 			log.Ctx(ctx).Error().Err(err).Msgf("/blogs add %s failed", rawURL)
-			text = failedText
+			text = controllertext.Failed
 		}
 		if err := h.poster.Reply(ctx, responseURL, slackpost.Escape(text)); err != nil {
 			log.Ctx(ctx).Error().Err(err).Msgf("cannot answer /blogs add %s", rawURL)
 		}
-	}()
+	})
 }

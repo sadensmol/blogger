@@ -2,7 +2,10 @@ package slackpost
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/slack-go/slack"
@@ -21,11 +24,13 @@ func Escape(s string) string {
 
 type Poster struct {
 	api       *slack.Client
+	http      *http.Client
 	channelID string
 }
 
-func NewPoster(api *slack.Client, channelID string) *Poster {
-	return &Poster{api: api, channelID: channelID}
+// NewPoster takes httpClient for replies to a response URL, which the api client does not send.
+func NewPoster(api *slack.Client, httpClient *http.Client, channelID string) *Poster {
+	return &Poster{api: api, http: httpClient, channelID: channelID}
 }
 
 func (p *Poster) Text(ctx context.Context, text string) error {
@@ -63,7 +68,12 @@ func (p *Poster) Pick(ctx context.Context, a domain.Article, pk domain.Pick) (st
 
 func (p *Poster) Reply(ctx context.Context, responseURL, text string) error {
 	msg := &slack.WebhookMessage{ResponseType: slack.ResponseTypeEphemeral, Text: text}
-	if err := slack.PostWebhookContext(ctx, responseURL, msg); err != nil {
+	if err := slack.PostWebhookCustomHTTPContext(ctx, responseURL, p.http, msg); err != nil {
+		// a *url.Error prints the response URL, which lets anyone post as the bot: keep only its cause
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			return fmt.Errorf("cannot reply to slash command: %s: %w", urlErr.Op, urlErr.Err)
+		}
 		return fmt.Errorf("cannot reply to slash command: %w", err)
 	}
 	return nil

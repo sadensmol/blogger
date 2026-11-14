@@ -150,11 +150,9 @@ func Serve(ctx context.Context, cfg config.Serve) error {
 	}
 	runner := llm.NewRunner(backends, filepath.Join(cfg.DataDir, jobsDirName))
 
-	api := slack.New(cfg.SlackBotToken,
-		slack.OptionAppLevelToken(cfg.SlackAppToken),
-		slack.OptionHTTPClient(&http.Client{Timeout: slackTimeout}),
-	)
-	poster := slackpost.NewPoster(api, cfg.SlackChannelID)
+	slackHTTP := &http.Client{Timeout: slackTimeout}
+	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken), slack.OptionHTTPClient(slackHTTP))
+	poster := slackpost.NewPoster(api, slackHTTP, cfg.SlackChannelID)
 	jobs := usecase.NewJobs(usecase.JobsData{
 		Digest: usecase.NewDigest(usecase.DigestData{
 			Articles: articles,
@@ -213,10 +211,11 @@ func Serve(ctx context.Context, cfg config.Serve) error {
 
 	cancel()
 	<-schedulerDone
+	handler.Wait()
 	select {
 	case <-workerDone:
 	case <-time.After(workerStopWait):
-		log.Ctx(ctx).Warn().Msgf("job worker still busy after %s: stopping anyway", workerStopWait)
+		log.Ctx(ctx).Warn().Msgf("job worker still busy after %s: closing the database under it", workerStopWait)
 	}
 	log.Ctx(ctx).Info().Msg("stopped")
 	return listenErr

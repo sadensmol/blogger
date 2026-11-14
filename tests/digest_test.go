@@ -10,15 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/slack-go/slack"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/sadensmol/blogger/internal/domain"
-	"github.com/sadensmol/blogger/internal/feed"
 	"github.com/sadensmol/blogger/internal/llm"
-	"github.com/sadensmol/blogger/internal/repository"
-	"github.com/sadensmol/blogger/internal/service"
-	"github.com/sadensmol/blogger/internal/slackpost"
 	"github.com/sadensmol/blogger/internal/usecase"
 	"github.com/sadensmol/blogger/tests"
 	testsrepository "github.com/sadensmol/blogger/tests/repository"
@@ -73,45 +69,25 @@ func (s *DigestTestSuite) SetupTest() {
 	s.runs = testsrepository.NewRun(s.DB)
 	s.versions = testsrepository.NewProfileVersion(s.DB)
 
-	sourceSvc := service.NewSource(repository.NewSource(s.DB), nil, s.Clock.Now)
-	runsSvc := service.NewRuns(repository.NewRun(s.DB), s.Clock.Now)
-	postsSvc := service.NewPosts(repository.NewPost(s.DB), s.Clock.Now)
-	backends, err := llm.NewBackends(llm.Config{
-		Order:     []llm.Backend{llm.Claude, llm.Codex},
-		ClaudeBin: s.agents.ClaudeBin,
-		CodexBin:  s.agents.CodexBin,
-		Home:      s.agents.Home,
-		AgentDir:  s.T().TempDir(),
-		Timeout:   10 * time.Second,
-	})
-	s.Require().NoError(err)
 	location, err := time.LoadLocation("Europe/Berlin")
 	s.Require().NoError(err)
+	s.digest = tests.NewApp(s.T(), tests.AppData{
+		DB:          s.DB,
+		Now:         s.Clock.Now,
+		Agents:      s.agents,
+		Backends:    []llm.Backend{llm.Claude, llm.Codex},
+		SlackURL:    s.slack.URL,
+		ChannelID:   digestChannelID,
+		ProfilePath: s.profilePath,
+		Location:    location,
+		DigestSize:  digestSize,
+	}).Digest
+}
 
-	s.digest = usecase.NewDigest(usecase.DigestData{
-		Articles: service.NewArticles(service.ArticlesData{
-			Sources: sourceSvc,
-			Repo:    repository.NewArticle(s.DB),
-			Feeds:   feed.NewClient(5*time.Second, feed.WithLoopbackAllowed()),
-			Runs:    runsSvc,
-			Now:     s.Clock.Now,
-		}),
-		Sources: sourceSvc,
-		Votes: service.NewVotes(service.VotesData{
-			Reactions: repository.NewReaction(s.DB),
-			Posts:     postsSvc,
-			Sources:   sourceSvc,
-			Now:       s.Clock.Now,
-		}),
-		Profile:  service.NewProfile(s.profilePath, repository.NewProfileVersion(s.DB), s.Clock.Now),
-		Posts:    postsSvc,
-		Runs:     runsSvc,
-		LLM:      llm.NewRunner(backends, s.T().TempDir()),
-		Poster:   slackpost.NewPoster(slack.New("xoxb-test", slack.OptionAPIURL(s.slack.URL+"/api/")), digestChannelID),
-		Size:     digestSize,
-		Location: location,
-		Now:      s.Clock.Now,
-	})
+func writeLearnedProfile(t *testing.T) string {
+	path := filepath.Join(t.TempDir(), "interests.md")
+	require.NoError(t, os.WriteFile(path, fmt.Appendf(nil, digestProfileFmt, digestNotes, digestLearned), 0o644))
+	return path
 }
 
 func (s *DigestTestSuite) TearDownTest() {

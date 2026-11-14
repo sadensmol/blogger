@@ -1,7 +1,9 @@
 package tests_test
 
 import (
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/slack-go/slack"
 	"github.com/stretchr/testify/suite"
@@ -17,6 +19,7 @@ const (
 	posterTitle     = "First post"
 	posterSource    = "Example Blog"
 	posterReason    = "fits your interests"
+	posterTimeout   = 5 * time.Second
 )
 
 type PosterTestSuite struct {
@@ -33,7 +36,7 @@ func TestPosterTestSuite(t *testing.T) {
 func (s *PosterTestSuite) SetupTest() {
 	s.fake = tests.NewFakeSlack()
 	api := slack.New("xoxb-test", slack.OptionAPIURL(s.fake.URL+"/api/"))
-	s.poster = slackpost.NewPoster(api, posterChannelID)
+	s.poster = slackpost.NewPoster(api, &http.Client{Timeout: posterTimeout}, posterChannelID)
 }
 
 func (s *PosterTestSuite) TearDownTest() {
@@ -70,6 +73,17 @@ func (s *PosterTestSuite) TestReplyIsEphemeral() {
 	s.Require().Len(s.fake.Replies(), 1)
 	s.Contains(s.fake.Replies()[0], `"response_type":"ephemeral"`)
 	s.Contains(s.fake.Replies()[0], "hello there")
+}
+
+func (s *PosterTestSuite) TestReplyErrorHidesResponseURL() {
+	const responsePath = "/response/secret-token"
+	gone := tests.NewFakeSlack()
+	gone.Close()
+
+	err := s.poster.Reply(s.T().Context(), gone.URL+responsePath, "hello there")
+
+	s.Require().Error(err)
+	s.NotContains(err.Error(), "secret-token")
 }
 
 func (s *PosterTestSuite) TestTextFailsWhenSlackFails() {

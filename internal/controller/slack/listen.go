@@ -11,7 +11,6 @@ import (
 	"github.com/slack-go/slack/socketmode"
 )
 
-// Listen runs the Socket Mode connection until ctx ends.
 func Listen(ctx context.Context, client *socketmode.Client, h *Handler) error {
 	runErr := make(chan error, 1)
 	go func() {

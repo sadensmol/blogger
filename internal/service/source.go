@@ -195,7 +195,7 @@ func (s *Source) find(ctx context.Context, ref string) (domain.Source, error) {
 	}
 	refURL, err := domain.ParseURL(ref)
 	if err != nil {
-		return domain.Source{}, fmt.Errorf("cannot find blog %q: %w", ref, err)
+		return domain.Source{}, fmt.Errorf("cannot find blog %q: not an id or a url: %w", ref, domain.ErrNotFound)
 	}
 	src, err := s.repo.FindNotDeletedByURL(ctx, refURL)
 	if err != nil {

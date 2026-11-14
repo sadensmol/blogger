@@ -311,6 +311,13 @@ func (s *SourcesTestSuite) TestCLIAnswersForUserLevelFailures() {
 	s.Equal(fmt.Sprintf("No feed found at %s/bare.\n", bare.URL()), out)
 }
 
+func (s *SourcesTestSuite) TestCLIUnparseableRefMatchesNoBlog() {
+	out, err := s.runCLI("", "remove", "foo")
+
+	s.Require().NoError(err)
+	s.Equal("No blog matches foo.\n", out)
+}
+
 func (s *SourcesTestSuite) TestCLIList() {
 	out, err := s.runCLI("", "list")
 	s.Require().NoError(err)

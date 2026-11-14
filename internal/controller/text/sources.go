@@ -7,7 +7,15 @@ import (
 	"github.com/sadensmol/blogger/internal/domain"
 )
 
-const NoBlogsYet = "No blogs yet."
+const (
+	NoBlogsYet = "No blogs yet."
+	BlogsUsage = "usage: list | add <url> | remove <id|url> | pause <id|url> | resume <id|url>"
+	Failed     = "Something went wrong. See the logs."
+)
+
+func Checking(rawURL string) string {
+	return fmt.Sprintf("Checking %s…", rawURL)
+}
 
 func SourceAdded(src domain.Source) string {
 	return fmt.Sprintf("Added #%d %s (%s).", src.ID, src.Title, src.FeedURL)

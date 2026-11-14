@@ -3,22 +3,15 @@ package tests_test
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/slack-go/slack"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/sadensmol/blogger/internal/domain"
-	"github.com/sadensmol/blogger/internal/feed"
 	"github.com/sadensmol/blogger/internal/llm"
-	"github.com/sadensmol/blogger/internal/repository"
 	"github.com/sadensmol/blogger/internal/scheduler"
-	"github.com/sadensmol/blogger/internal/service"
-	"github.com/sadensmol/blogger/internal/slackpost"
 	"github.com/sadensmol/blogger/internal/usecase"
 	"github.com/sadensmol/blogger/tests"
 	testsrepository "github.com/sadensmol/blogger/tests/repository"
@@ -85,58 +78,18 @@ func (s *SchedulerTestSuite) articleURL() string {
 }
 
 func (s *SchedulerTestSuite) newScheduler() *scheduler.Scheduler {
-	profilePath := filepath.Join(s.T().TempDir(), "interests.md")
-	s.Require().NoError(os.WriteFile(profilePath, fmt.Appendf(nil, digestProfileFmt, digestNotes, digestLearned), 0o644))
-
-	sourceSvc := service.NewSource(repository.NewSource(s.DB), nil, s.Clock.Now)
-	runsSvc := service.NewRuns(repository.NewRun(s.DB), s.Clock.Now)
-	postsSvc := service.NewPosts(repository.NewPost(s.DB), s.Clock.Now)
-	feeds := feed.NewClient(5*time.Second, feed.WithLoopbackAllowed())
-	articles := service.NewArticles(service.ArticlesData{
-		Sources: sourceSvc,
-		Repo:    repository.NewArticle(s.DB),
-		Feeds:   feeds,
-		Runs:    runsSvc,
-		Now:     s.Clock.Now,
+	app := tests.NewApp(s.T(), tests.AppData{
+		DB:          s.DB,
+		Now:         s.Clock.Now,
+		Agents:      s.agents,
+		Backends:    []llm.Backend{llm.Claude},
+		SlackURL:    s.slack.URL,
+		ChannelID:   digestChannelID,
+		ProfilePath: writeLearnedProfile(s.T()),
+		Location:    s.location,
+		DigestSize:  digestSize,
 	})
-	backends, err := llm.NewBackends(llm.Config{
-		Order:     []llm.Backend{llm.Claude},
-		ClaudeBin: s.agents.ClaudeBin,
-		CodexBin:  s.agents.CodexBin,
-		Home:      s.agents.Home,
-		AgentDir:  s.T().TempDir(),
-		Timeout:   10 * time.Second,
-	})
-	s.Require().NoError(err)
-	runner := llm.NewRunner(backends, s.T().TempDir())
-
-	jobs := usecase.NewJobs(usecase.JobsData{
-		Digest: usecase.NewDigest(usecase.DigestData{
-			Articles: articles,
-			Sources:  sourceSvc,
-			Votes: service.NewVotes(service.VotesData{
-				Reactions: repository.NewReaction(s.DB),
-				Posts:     postsSvc,
-				Sources:   sourceSvc,
-				Now:       s.Clock.Now,
-			}),
-			Profile:  service.NewProfile(profilePath, repository.NewProfileVersion(s.DB), s.Clock.Now),
-			Posts:    postsSvc,
-			Runs:     runsSvc,
-			LLM:      runner,
-			Poster:   slackpost.NewPoster(slack.New("xoxb-test", slack.OptionAPIURL(s.slack.URL+"/api/")), digestChannelID),
-			Size:     digestSize,
-			Location: s.location,
-			Now:      s.Clock.Now,
-		}),
-		Discovery: usecase.NewDiscovery(usecase.DiscoveryData{
-			Sources: sourceSvc,
-			Feeds:   feeds,
-			Runs:    runsSvc,
-			LLM:     runner,
-		}),
-		Size: 3,
-	})
+	jobs := usecase.NewJobs(app.JobsData(3))
 	ctx, cancel := context.WithCancel(s.Ctx)
 	done := make(chan struct{})
 	go func() {
@@ -150,8 +103,8 @@ func (s *SchedulerTestSuite) newScheduler() *scheduler.Scheduler {
 
 	return scheduler.New(scheduler.Data{
 		Jobs:       jobs,
-		Articles:   articles,
-		Runs:       runsSvc,
+		Articles:   app.Articles,
+		Runs:       app.Runs,
 		At:         scheduler.DailyTime{Hour: 10},
 		Location:   s.location,
 		FetchEvery: schedulerFetchEvery,
