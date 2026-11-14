@@ -78,14 +78,14 @@ The bot runs on your computer and uses your own `claude` and `codex` logins.
 4. Check the output for `starting` and `connected to Slack`. Then type `/show` in the channel.
 5. To debug, run `make debug-local`. It starts the bot under Delve (`dlv`).
 
-Set `DEV_ENV=<path>` to use another env file. For a local model, run Ollama, pull a model, and add `BLOGGER_LOCAL_MODEL=<model>` and `BLOGGER_OLLAMA_URL=http://localhost:11434/v1`.
+Set `DEV_ENV=<path>` to use another env file. For a local model, run Ollama, pull a model, add `codex-oss` to `BLOGGER_BACKENDS` (for example `claude,codex,codex-oss`), and add `BLOGGER_LOCAL_MODEL=<model>` and `BLOGGER_OLLAMA_URL=http://localhost:11434/v1`.
 
 ## 6. Docker run
 
-The bot runs in one container with `restart: unless-stopped`. All files on the host live in `~/blogger`: `compose.yaml`, `settings.env`, `updater.sh`, `.env` (secrets), `codex/` (the Codex login) and `image.tag`. The deploy scripts copy the public files over SSH and never read a secret. Below, `H` means:
+The bot runs in one container with `restart: unless-stopped`. All files on the host live in `~/blogger`: `compose.yaml`, `settings.env`, `updater.sh`, `.env` (secrets), `codex/` (the Codex login) and `image.tag`. The deploy scripts copy the public files over SSH and never read a secret. Below, `H` is this shell function; define it in your shell first:
 
 ```bash
-ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 <user>@<board-host>
+H() { ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 <user>@<board-host> "$@"; }
 ```
 
 ### 6.1 Prepare the host
@@ -141,7 +141,7 @@ export BLOGGER_BOARD_HOST=<user>@<board-host>
 make deploy-ci      # or: make deploy-local
 ```
 
-Always set `BLOGGER_BOARD_HOST`; the scripts have a built-in default host that is not yours. `make deploy-ci` stops when the host has no ghcr.io login.
+The scripts stop when `BLOGGER_BOARD_HOST` is not set. To skip the `export`, write `<user>@<board-host>` to `~/.config/blogger/board-host` (one line, outside the repo); `make` reads it when the variable is unset. `make deploy-ci` stops when the host has no ghcr.io login.
 
 Check the log: `H 'timeout 20 docker logs --tail 50 blogger'`. Look for `blogger <tag> starting` and `connected to Slack`.
 
@@ -149,9 +149,9 @@ Check the log: `H 'timeout 20 docker logs --tail 50 blogger'`. Look for `blogger
 
 **Updater.** The `updater` container reads `~/blogger/image.tag` every 5 minutes. With `latest` (set by `make deploy-ci`) it pulls the CI image and restarts the bot when the image changed. With any other tag (set by `make deploy-local`) the host is pinned and the updater does nothing. When the GitHub token expires, the updater logs `pull failed`; make a new token and repeat the login.
 
-**Docker on the same computer.** Without SSH, copy `deploy/compose.yaml`, `deploy/settings.env` and `deploy/updater.sh` to `~/blogger`, add `.env` and `codex/` as above, and run `docker compose up -d` in `~/blogger`.
+**Docker on the same computer.** The computer must be Linux arm64 too: the image is `linux/arm64` only. Without SSH, copy `deploy/compose.yaml`, `deploy/settings.env` and `deploy/updater.sh` to `~/blogger`, and add `.env` and `codex/` as above. Then get the image: either log in with `docker login ghcr.io -u <github-user> --password-stdin < ~/.config/blogger/ghcr-token` and run `docker compose up -d` in `~/blogger` (it pulls `:latest`), or build it in the repo with `make image` (tag `local-<sha>`, where `<sha>` is `git rev-parse --short HEAD`), write `local-<sha>` to `~/blogger/image.tag` so the updater leaves it alone, and run `BLOGGER_IMAGE_TAG=local-<sha> docker compose up -d` in `~/blogger`.
 
-**Local model in Docker (Jetson).** `docker compose --profile local up -d ollama` in `~/blogger` starts Ollama with the GPU. Pull a model with `docker compose exec ollama ollama pull <model>` and set `BLOGGER_LOCAL_MODEL=<model>` in `.env`.
+**Local model in Docker (Jetson).** Start Ollama with the GPU: `H 'cd ~/blogger && timeout 300 docker compose --profile local up -d ollama'`. Pull a model (this can take long): `H 'cd ~/blogger && timeout 3600 docker compose exec -T ollama ollama pull <model>'`. Set `BLOGGER_LOCAL_MODEL=<model>` and add `codex-oss` to `BLOGGER_BACKENDS` in `secrets.env`, copy it to `~/blogger/.env` again (section 6.3) and deploy again.
 
 ## 7. CI/CD
 
@@ -174,7 +174,7 @@ Check the log: `H 'timeout 20 docker logs --tail 50 blogger'`. Look for `blogger
   In Docker: `H 'timeout 300 docker exec -i blogger blogger sources import --apply -' < blogs.yaml`. Without `--apply` the command only shows the changes.
 - **In Slack.** `/blogs list`, `/blogs add <url>`, `/blogs remove <id|url>`, `/blogs pause <id|url>`, `/blogs resume <id|url>`.
 - **Suggestions.** `/discover` searches the web for blogs like the ones you rate up. It posts up to 10 blogs, each with a **+ Add** button. It needs the `claude` or `codex` backend.
-- **In Claude Code.** The `manage-blogs` skill lists, adds and removes blogs and edits your interest notes (`## My notes`). Change its SSH host in `.claude/skills/manage-blogs/SKILL.md` to `<user>@<board-host>`.
+- **In Claude Code.** The `manage-blogs` skill lists, adds and removes blogs and edits your interest notes (`## My notes`). It reaches the host through `BLOGGER_BOARD_HOST` or `~/.config/blogger/board-host`.
 
 ## 9. Daily use
 
@@ -186,7 +186,7 @@ Check the log: `H 'timeout 20 docker logs --tail 50 blogger'`. Look for `blogger
 
 ## 10. Troubleshooting
 
-- **Logs.** Local: the terminal of `make run-local`. Docker: `H 'timeout 20 docker logs --tail 100 blogger'` and `docker logs blogger-updater`.
+- **Logs.** Local: the terminal of `make run-local`. Docker: `H 'timeout 20 docker logs --tail 100 blogger'` and `H 'timeout 20 docker logs --tail 50 blogger-updater'`.
 - **Wrong clock.** The log says `board clock is wrong` and the bot waits. Turn on NTP on the host (`sudo timedatectl set-ntp true`).
 - **Bot is not in the channel.** Posts fail with `not_in_channel`. Type `/invite @blogger` in the channel.
 - **"/show is not a valid command".** The app has an old manifest. Update the manifest and reinstall the app (section 3).

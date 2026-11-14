@@ -10,10 +10,11 @@ Guide the user through the setup in `README.md`, one step at a time. Do the chec
 ## Rules
 
 - **One step per message.** Say exactly what to do, with the link. Then stop and wait for "done" or "copied". Do not continue on your own.
-- **Never show a secret.** Never print, `cat`, `echo` or `grep` a secrets file, never run `set -x` near one, and never print a token, `~/.docker/config.json` or `docker exec … env`. Check files by key names or counts only: `cut -d= -f1 <file>`, `grep -c`. Never ask the user to paste a secret into the chat. If they do, tell them to rotate it.
+- **Never show a secret.** Never print the content of a secrets file, a token, `~/.docker/config.json` or `docker exec … env`, and never run `set -x` near one. Key-name and count checks are fine: `cut -d= -f1 <file>`, `grep -c`. Never ask the user to paste a secret into the chat. If they do, tell them to rotate it.
 - **Secrets come only from the clipboard**, through `scripts/set-secret.sh`. It checks the shape (`xapp-`, `xoxb-`, `C…`, `U…`, `sk-ant-oat01-`, `ghp_`/`github_pat_`), writes the file with mode 600 and prints the key name and length only. Clipboard command: `pbpaste` on macOS, `wl-paste -n` on Wayland, `xclip -o -selection clipboard` on X11. With none of these, ask the user how to pass the value (for example: they run the same `set-secret.sh` command in their own terminal). After each secret, clear the clipboard (`printf '' | pbcopy`, or the matching tool).
 - **Every remote command** has SSH watchdogs and a far-side timeout:
   `ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$HOST" 'timeout <N> <command>'`
+  Below, `<opts>` means these three `-o` options.
 - Run all commands from the repo root. `SS=skills/sadensmol-blogger-setup/scripts/set-secret.sh`.
 - Never commit or push. Never write a secret inside the repo.
 
@@ -78,7 +79,7 @@ When `set-secret.sh` rejects a value, ask the user to copy it again. Do not show
 
   Check: `CODEX_HOME=~/.config/blogger/codex codex login status` and `test -s ~/.config/blogger/codex/auth.json && echo present`. Tell them never to use this Codex home on this machine again.
 
-**Ollama (optional).** Local: `ollama list`; let the user pick a model. Remote (Jetson with the NVIDIA runtime): after Step 6, `docker compose --profile local up -d ollama` and `docker compose exec ollama ollama pull <model>` in `~/blogger`.
+**Ollama (optional).** Local: `ollama list`; let the user pick a model. Remote (Jetson with the NVIDIA runtime): after Step 6b, start it with `ssh <opts> "$HOST" 'cd ~/blogger && timeout 300 docker compose --profile local up -d ollama'`, then pull the model in the background with `ssh <opts> "$HOST" 'cd ~/blogger && timeout 3600 docker compose exec -T ollama ollama pull <model>'`. Then set the Step 5 keys, copy `secrets.env` again (Step 6b.4) and deploy again (Step 6b.6).
 
 ## Step 5 — Settings
 
@@ -106,7 +107,7 @@ On the remote host `.env` wins over `deploy/settings.env`, so these overrides be
 Run each check, show the result, and stop on a failure with the fix.
 
 1. **SSH:** `ssh -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$HOST" 'timeout 10 uname -m'`. A password prompt or `Permission denied` → ask the user to run `ssh-copy-id <user>@<host>`. The result must be `aarch64`: the image is `linux/arm64` only. On another architecture, stop and suggest the local run.
-2. **Docker:** `timeout 20 sh -c "docker version --format {{.Server.Version}}; docker compose version --short; systemctl is-enabled docker"`. A permission error → the user runs `sudo usermod -aG docker <user>` on the host and logs in again. Not `enabled` → the user runs `sudo systemctl enable --now docker`.
+2. **Docker:** `timeout 20 sh -c "docker version --format {{.Server.Version}}; docker compose version --short; systemctl is-enabled docker"`. `docker: not found` → the user installs Docker Engine and the Compose plugin with the guide for their distribution: https://docs.docker.com/engine/install/ , then runs this check again. A permission error → the user runs `sudo usermod -aG docker <user>` on the host and logs in again. Not `enabled` → the user runs `sudo systemctl enable --now docker`.
 3. **Clock:** `timeout 10 sh -c "date -u; timedatectl show -p NTP -p NTPSynchronized"`. Expect the right date and `NTP=yes`, `NTPSynchronized=yes`. Else the user runs `sudo timedatectl set-ntp true`. The bot does nothing while the clock is wrong.
 4. **Folder and secrets** (stdin into `umask 077` files, never printed):
 
@@ -118,13 +119,13 @@ Run each check, show the result, and stop on a failure with the fix.
    ssh <opts> "$HOST" 'timeout 10 stat -c "%a %u %n" ~/blogger/codex ~/blogger/codex/auth.json'
    ```
 
-   `<opts>` is the watchdog options from the Rules. Without the `codex` backend, skip the two `auth.json` lines and the `stat` check. The uid must be `1000` (the container's agent user). Else the user runs `sudo chown -R 1000:1000 ~/blogger/codex` on the host.
+   Without the `codex` backend, skip the two `auth.json` lines and the `stat` check. The uid must be `1000` (the container's agent user). Else the user runs `sudo chown -R 1000:1000 ~/blogger/codex` on the host.
 5. **Image, CI way.** Check that the image name is theirs: `grep -rn 'ghcr.io/.*/blogger' .github deploy Makefile`. If it is not their GitHub user, send them to README section 7 (fork, rename the image, wait for the `image` job) and wait. Then the GHCR read token:
    - "Open https://github.com/settings/tokens → **Generate new token (classic)**. Select only `read:packages`, set an expiry, generate, copy." Wait, then `pbpaste | $SS --raw GHCR_TOKEN ~/.config/blogger/ghcr-token`.
    - Ask for their GitHub user name, then log in through stdin:
      `ssh <opts> "$HOST" 'timeout 30 docker login ghcr.io -u <github-user> --password-stdin' < ~/.config/blogger/ghcr-token`
    - Check: `ssh <opts> "$HOST" 'timeout 10 sh -c "grep -c ghcr.io ~/.docker/config.json; grep -c credsStore ~/.docker/config.json"'` must print `1` then `0`.
-6. **Deploy** (allow up to 10 minutes): `BLOGGER_BOARD_HOST="$HOST" make deploy-ci`, or `BLOGGER_BOARD_HOST="$HOST" make deploy-local` to build here. Always set `BLOGGER_BOARD_HOST`: the scripts' default host is not the user's.
+6. **Deploy** (allow up to 10 minutes): `BLOGGER_BOARD_HOST="$HOST" make deploy-ci`, or `BLOGGER_BOARD_HOST="$HOST" make deploy-local` to build here. The scripts stop without `BLOGGER_BOARD_HOST`. Offer to save the host (not a secret) for later runs and for `manage-blogs`: `mkdir -p ~/.config/blogger && echo "$HOST" > ~/.config/blogger/board-host`; `make` reads it when the variable is unset.
 7. **Verify:** `ssh <opts> "$HOST" 'timeout 20 docker logs --tail 50 blogger'`. Look for `starting` and `connected to Slack`.
 8. **Reboot test (optional, ask first).** The user runs `sudo reboot` on the host. Poll SSH every 15 s for up to 5 minutes, then check `timeout 10 docker ps --format "{{.Names}} {{.Status}}"` shows `blogger` and `blogger-updater` up, and the log again.
 
@@ -134,5 +135,5 @@ Run each check, show the result, and stop on a failure with the fix.
    - Local: `(set -a; . ~/.config/blogger/dev.env; set +a; export BLOGGER_DATA_DIR="$PWD/.scratch/dev-data" BLOGGER_AGENT_DIR="$PWD/agent"; go run ./cmd/blogger sources import -) < blogs.yaml`
    - Remote: `ssh <opts> "$HOST" 'timeout 300 docker exec -i blogger blogger sources import -' < blogs.yaml`
 2. **First digest.** Ask the user to type `/show` in the channel and say what they see. Watch the log while they do. "not a valid command" → the app needs the manifest update and a reinstall (README section 3). `not_in_channel` → `/invite @blogger`.
-3. **Explain, briefly:** 👍/👎 on each post teach the bot; `/blogs list|add|remove|pause|resume`; `/discover` suggests up to 10 new blogs with a **+ Add** button; the digest comes daily at `BLOGGER_DIGEST_TIME`. The `manage-blogs` skill edits blogs and notes from Claude Code; its SSH host must be changed to `$HOST`.
+3. **Explain, briefly:** 👍/👎 on each post teach the bot; `/blogs list|add|remove|pause|resume`; `/discover` suggests up to 10 new blogs with a **+ Add** button; the digest comes daily at `BLOGGER_DIGEST_TIME`. The `manage-blogs` skill edits blogs and notes from Claude Code; it finds the host in `BLOGGER_BOARD_HOST` or `~/.config/blogger/board-host`.
 4. Name where the secrets live (`~/.config/blogger/` here; `~/blogger/.env` and `~/blogger/codex/` on the host) and that they never go into the repo.
