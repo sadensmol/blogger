@@ -160,7 +160,7 @@ func (c *Client) sitemapRoots(ctx context.Context, siteURL domain.URL) []string 
 }
 
 func (c *Client) readSitemap(ctx context.Context, loc string) (sitemapXML, error) {
-	body, err := c.get(ctx, domain.URL(loc), maxFeedBytes)
+	body, err := c.getWhole(ctx, domain.URL(loc))
 	if err != nil {
 		return sitemapXML{}, err
 	}

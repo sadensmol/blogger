@@ -146,7 +146,7 @@ func (c *Client) Fetch(ctx context.Context, feedURL domain.URL) ([]Item, error) 
 }
 
 func (c *Client) Resolve(ctx context.Context, pageURL domain.URL) (Info, error) {
-	body, err := c.get(ctx, pageURL, maxFeedBytes)
+	body, err := c.getWhole(ctx, pageURL)
 	if err != nil {
 		return Info{}, err
 	}
@@ -169,7 +169,7 @@ func (c *Client) Resolve(ctx context.Context, pageURL domain.URL) (Info, error) 
 }
 
 func (c *Client) fetchFeed(ctx context.Context, feedURL domain.URL) (*gofeed.Feed, error) {
-	body, err := c.get(ctx, feedURL, maxFeedBytes)
+	body, err := c.getWhole(ctx, feedURL)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +182,20 @@ func (c *Client) fetchFeed(ctx context.Context, feedURL domain.URL) (*gofeed.Fee
 	return parsed, nil
 }
 
-// get reads the body of target; a body larger than limit is an error.
+// getWhole reads the whole body of target. A body over maxFeedBytes is an error: a cut feed or sitemap does not parse.
+func (c *Client) getWhole(ctx context.Context, target domain.URL) ([]byte, error) {
+	body, err := c.get(ctx, target, maxFeedBytes+1)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxFeedBytes {
+		return nil, fmt.Errorf("cannot read %s: body is larger than %d MiB", target, maxFeedBytes>>20)
+	}
+
+	return body, nil
+}
+
+// get reads the body of target, cut at limit bytes.
 func (c *Client) get(ctx context.Context, target domain.URL, limit int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, string(target), nil)
 	if err != nil {
@@ -210,12 +223,9 @@ func (c *Client) get(ctx context.Context, target domain.URL, limit int64) ([]byt
 		return nil, fmt.Errorf("cannot get %s: status %d", target, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %s: %w", target, err)
-	}
-	if int64(len(body)) > limit {
-		return nil, fmt.Errorf("cannot read %s: body is larger than %d MiB", target, limit>>20)
 	}
 
 	return body, nil

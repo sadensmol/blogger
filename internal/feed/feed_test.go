@@ -129,6 +129,23 @@ func TestFetchRefusesFeedLargerThan32MiB(t *testing.T) {
 	require.ErrorContains(t, err, "larger than 32 MiB")
 }
 
+func TestReadArticleReadsHeadOfPageLargerThanTwoMiB(t *testing.T) {
+	const bodyMiB = 3
+	chunk := []byte(strings.Repeat("a", 1<<20))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<html><head><meta property="og:title" content="Big page"></head><body><p>`))
+		for range bodyMiB {
+			_, _ = w.Write(chunk)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	info, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).ReadArticle(context.Background(), mustURL(t, srv.URL))
+
+	require.NoError(t, err)
+	require.Equal(t, "Big page", info.Title)
+}
+
 func TestFetchTimesOut(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		select {
