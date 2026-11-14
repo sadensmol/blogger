@@ -6,6 +6,7 @@ in=$(printf '%s' "$2" | sed -n 's|.*Input: \([^ ]*\.json\).*|\1|p')
 touch "$HOME/claude.lock"
 printf '%s\n' "$*" >> "$HOME/claude.args"
 env | cut -d= -f1 | sort > "$HOME/claude.env"
+printf '%s\n' "${PATH%%:*}" > "$HOME/claude.path"
 cp "$in" "$HOME/claude.$skill.input"
 if [ -f "$HOME/claude.sleep" ]; then
 	sleep "$(cat "$HOME/claude.sleep")" &

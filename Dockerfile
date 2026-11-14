@@ -30,7 +30,9 @@ COPY agent /app/agent
 RUN install -d -m 0700 /data \
  && install -d -m 0711 /var/lib/blogger /var/lib/blogger/jobs \
  && install -d -m 0700 -o blogger -g blogger /home/blogger/.codex
+# blogger owns its home: root's PATH and entrypoint never point into it, so the agent cannot plant a program
+# that root runs. The bot starts claude by its full path, as blogger.
 ENV BLOGGER_DATA_DIR=/data BLOGGER_JOBS_DIR=/var/lib/blogger/jobs BLOGGER_AGENT_USER=blogger \
-    PATH=/home/blogger/.local/bin:$PATH
-ENTRYPOINT ["blogger"]
+    BLOGGER_CLAUDE_BIN=/home/blogger/.local/bin/claude
+ENTRYPOINT ["/usr/local/bin/blogger"]
 CMD ["serve"]

@@ -224,6 +224,16 @@ func TestFallsBackWhenPicksAreBelowMin(t *testing.T) {
 	require.Equal(t, []domain.URL{URLA}, pickURLs(picks))
 }
 
+func TestAgentPathStartsWithTheAgentHomeBin(t *testing.T) {
+	f := newFakeAgents(t, llm.Claude)
+	f.answer("claude", llm.SkillPickArticles, picksAnswer(URLA))
+
+	_, _, err := f.runner().PickArticles(context.Background(), pickInput())
+
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(f.home, ".local", "bin"), strings.TrimSpace(f.read("claude.path")))
+}
+
 func TestFallsBackOnTimeout(t *testing.T) {
 	f := newFakeAgents(t, llm.Claude, llm.Codex)
 	f.cfg.Timeout = time.Second

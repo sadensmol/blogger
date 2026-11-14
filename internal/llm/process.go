@@ -50,7 +50,8 @@ func runProcess(ctx context.Context, d processData) error {
 	cmd.Dir = d.WorkDir
 	cmd.Env = append([]string{
 		fmt.Sprintf("HOME=%s", d.RunAs.Home),
-		fmt.Sprintf("PATH=%s", os.Getenv("PATH")),
+		// the agent finds its own tools in its home; the bot's PATH never includes that folder
+		fmt.Sprintf("PATH=%s:%s", filepath.Join(d.RunAs.Home, ".local", "bin"), os.Getenv("PATH")),
 		fmt.Sprintf("USER=%s", d.RunAs.Name),
 	}, d.Env...)
 	cmd.Stdout = stdout
