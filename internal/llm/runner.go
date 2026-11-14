@@ -32,12 +32,14 @@ type Runner struct {
 	backends []IBackend
 	jobsDir  string
 	runAs    RunAs
+	// a fetch asks about links outside the job queue: the runner still lets one agent run at a time
+	turn chan struct{}
 }
 
 // NewRunner takes runAs to give the out folder of each job to the agent user.
 // jobsDir must not be writable by the agent user: root works in the job folders.
 func NewRunner(backends []IBackend, jobsDir string, runAs RunAs) *Runner {
-	return &Runner{backends: backends, jobsDir: jobsDir, runAs: runAs}
+	return &Runner{backends: backends, jobsDir: jobsDir, runAs: runAs, turn: make(chan struct{}, 1)}
 }
 
 type jobRequest struct {
@@ -48,6 +50,13 @@ type jobRequest struct {
 
 // run keeps the job folder after a failure: its input and stderr.log are the evidence.
 func (r *Runner) run(ctx context.Context, req jobRequest, accept func(answer []byte) error) (Backend, error) {
+	select {
+	case <-ctx.Done():
+		return "", fmt.Errorf("%s job stopped: %w", req.skill, ctx.Err())
+	case r.turn <- struct{}{}:
+	}
+	defer func() { <-r.turn }()
+
 	job, err := r.newJob(req)
 	if err != nil {
 		return "", err

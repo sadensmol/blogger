@@ -1,6 +1,7 @@
 package tests_test
 
 import (
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -57,6 +58,17 @@ func (s *PosterTestSuite) TestPickPostsLinkAndAddsBothReactions() {
 	s.Contains(s.fake.Posted()[0], "<https://example.com/a|First post>")
 	s.Contains(s.fake.Posted()[0], posterSource)
 	s.Equal([]string{"1.000100:+1", "1.000100:-1"}, s.fake.Reactions())
+}
+
+func (s *PosterTestSuite) TestPickLinksTheSourceToTheBlogPage() {
+	const blogPage = "https://example.com/writing"
+	article := s.article(posterTitle)
+	article.SourceURL = blogPage
+
+	_, _, err := s.poster.Pick(s.T().Context(), article, domain.Pick{Description: "d", Reason: posterReason})
+
+	s.Require().NoError(err)
+	s.Contains(s.fake.Posted()[0], fmt.Sprintf("_<%s|%s> · %s_", blogPage, posterSource, posterReason))
 }
 
 func (s *PosterTestSuite) TestPickEscapesTitle() {

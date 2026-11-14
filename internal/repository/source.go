@@ -20,7 +20,8 @@ func NewSource(db *sql.DB) *Source {
 
 type sourceRow struct {
 	id                int64
-	siteURL, feedURL  string
+	siteURL           string
+	feedURL           sql.NullString
 	title, reason     string
 	status, origin    string
 	statusChangedAt   string
@@ -63,7 +64,7 @@ func (r repositorySource) toDomain() (domain.Source, error) {
 	return domain.Source{
 		ID:               domain.SourceID(r.id),
 		SiteURL:          domain.URL(r.siteURL),
-		FeedURL:          domain.URL(r.feedURL),
+		FeedURL:          domain.URL(r.feedURL.String),
 		Title:            r.title,
 		Reason:           r.reason,
 		Status:           status,
@@ -138,11 +139,22 @@ func (r *Source) findOne(ctx context.Context, query string, args ...any) (domain
 	return sources[0], nil
 }
 
+// Create brings back a deleted blog with the same page or feed; a blog in the list is ErrAlreadyExists.
 func (r *Source) Create(ctx context.Context, s domain.Source, now time.Time) (domain.Source, error) {
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
 INSERT INTO source (site_url, feed_url, title, status, origin, reason, status_changed_at, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (site_url) DO UPDATE SET
+    feed_url = excluded.feed_url,
+    title = excluded.title,
+    status = excluded.status,
+    origin = excluded.origin,
+    reason = excluded.reason,
+    status_changed_at = excluded.status_changed_at,
+    deleted_at = NULL,
+    updated_at = excluded.updated_at
+WHERE source.deleted_at IS NOT NULL
 ON CONFLICT (feed_url) DO UPDATE SET
     site_url = excluded.site_url,
     title = excluded.title,
@@ -154,13 +166,13 @@ ON CONFLICT (feed_url) DO UPDATE SET
     updated_at = excluded.updated_at
 WHERE source.deleted_at IS NOT NULL
 RETURNING id`,
-		s.SiteURL, s.FeedURL, s.Title, s.Status, s.Origin, s.Reason, formatTime(now), formatTime(now), formatTime(now),
+		s.SiteURL, optionalURL(s.FeedURL), s.Title, s.Status, s.Origin, s.Reason, formatTime(now), formatTime(now), formatTime(now),
 	).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return domain.Source{}, fmt.Errorf("source %s: %w", s.FeedURL, domain.ErrAlreadyExists)
+		return domain.Source{}, fmt.Errorf("source %s: %w", s.SiteURL, domain.ErrAlreadyExists)
 	}
 	if err != nil {
-		return domain.Source{}, fmt.Errorf("cannot create source %s: %w", s.FeedURL, err)
+		return domain.Source{}, fmt.Errorf("cannot create source %s: %w", s.SiteURL, err)
 	}
 	return r.FindNotDeletedByID(ctx, domain.SourceID(id))
 }
@@ -170,7 +182,7 @@ func (r *Source) Update(ctx context.Context, s domain.Source, now time.Time) err
 UPDATE source
 SET site_url = ?, feed_url = ?, title = ?, status = ?, origin = ?, reason = ?, status_changed_at = ?, updated_at = ?
 WHERE id = ? AND deleted_at IS NULL`,
-		s.SiteURL, s.FeedURL, s.Title, s.Status, s.Origin, s.Reason, formatTime(s.StatusChangedAt), formatTime(now), s.ID)
+		s.SiteURL, optionalURL(s.FeedURL), s.Title, s.Status, s.Origin, s.Reason, formatTime(s.StatusChangedAt), formatTime(now), s.ID)
 	if err != nil {
 		return fmt.Errorf("cannot update source %d: %w", s.ID, err)
 	}
@@ -251,11 +263,12 @@ func (r *Source) ListActiveOrTrial(ctx context.Context) ([]domain.Source, error)
 	return r.list(ctx, sourceActiveOrTrialQuery)
 }
 
-func (r *Source) ExistsByFeedURL(ctx context.Context, u domain.URL) (bool, error) {
+// ExistsBySiteURLOrFeedURL counts deleted blogs too. An empty feedURL matches no feed.
+func (r *Source) ExistsBySiteURLOrFeedURL(ctx context.Context, siteURL, feedURL domain.URL) (bool, error) {
 	var exists bool
-	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source WHERE feed_url = ?)`, u).Scan(&exists)
+	err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM source WHERE site_url = ? OR feed_url = ?)`, siteURL, feedURL).Scan(&exists)
 	if err != nil {
-		return false, fmt.Errorf("cannot check source %s: %w", u, err)
+		return false, fmt.Errorf("cannot check source %s: %w", siteURL, err)
 	}
 	return exists, nil
 }

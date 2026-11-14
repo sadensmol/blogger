@@ -32,7 +32,7 @@ A command that reads stdin gets the file through a redirect outside the subshell
 | User asks | Board command |
 |---|---|
 | list the blogs | `timeout 20 docker exec blogger blogger sources list` |
-| add a blog | `timeout 60 docker exec blogger blogger sources add <url>` |
+| add a blog (the page that lists its posts; a blog without a feed needs at least 3 articles on that page) | `timeout 60 docker exec blogger blogger sources add <url>` |
 | remove a blog | `timeout 60 docker exec blogger blogger sources remove <id-or-url>` |
 | pause a blog | `timeout 60 docker exec blogger blogger sources pause <id-or-url>` |
 | resume a blog | `timeout 60 docker exec blogger blogger sources resume <id-or-url>` |
@@ -42,6 +42,9 @@ To replace the full list:
 
 1. Save the output of `sources export` to `.scratch/sources.yaml`.
 2. Edit the file as the user asks. Keep its YAML shape. Keep every field the user does not change, as exported: `id`, `url`, `feed`, `title`, `status`, `origin`, `up` and `down`.
+   - `url` is the page that lists the blog's posts, for example `https://example.com/writing`. The bot reads this page and the feed. The Slack lists link to it.
+   - `feed` is optional. Leave it out for a blog without a feed. A new entry without `feed` gets the feed found at its page, when the blog has one.
+   - To move a blog to a better page, change its `url` and keep its `feed`. The blog keeps its votes and articles.
 3. Run a dry run. The `< file` redirect stays outside the ssh quotes, so it runs on the Mac:
 
    ```bash

@@ -67,6 +67,7 @@ type VotedArticle struct {
 }
 
 type BlogProposal struct {
-	SiteURL, FeedURL     URL
+	SiteURL              URL // the page that lists the blog's posts
+	FeedURL              URL // empty: the blog has no feed
 	Title, About, Reason string
 }

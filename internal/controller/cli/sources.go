@@ -230,13 +230,13 @@ func importSources(ctx context.Context, d SourcesData, args []string) error {
 
 	var out strings.Builder
 	for _, src := range diff.Add {
-		fmt.Fprintf(&out, "+ add     %s\n", src.FeedURL)
+		fmt.Fprintf(&out, "+ add     %s (%s)\n", src.SiteURL, describeFeed(src.FeedURL))
 	}
 	for _, src := range diff.Remove {
-		fmt.Fprintf(&out, "- remove  #%d %s\n", src.ID, src.FeedURL)
+		fmt.Fprintf(&out, "- remove  #%d %s\n", src.ID, src.SiteURL)
 	}
 	for _, change := range diff.Change {
-		fmt.Fprintf(&out, "~ change  #%d %s %s\n", change.Before.ID, change.Before.FeedURL, describeChange(change))
+		fmt.Fprintf(&out, "~ change  #%d %s %s\n", change.Before.ID, change.Before.SiteURL, describeChange(change))
 	}
 	if !apply {
 		fmt.Fprintf(&out, "%d changes. Run again with --apply to apply them.\n", total)
@@ -285,5 +285,15 @@ func describeChange(c domain.SourceChange) string {
 	if c.Before.SiteURL != c.After.SiteURL {
 		parts = append(parts, fmt.Sprintf("url %s -> %s", c.Before.SiteURL, c.After.SiteURL))
 	}
+	if c.Before.FeedURL != c.After.FeedURL {
+		parts = append(parts, fmt.Sprintf("%s -> %s", describeFeed(c.Before.FeedURL), describeFeed(c.After.FeedURL)))
+	}
 	return strings.Join(parts, ", ")
+}
+
+func describeFeed(feedURL domain.URL) string {
+	if feedURL == "" {
+		return "no feed"
+	}
+	return fmt.Sprintf("feed %s", feedURL)
 }

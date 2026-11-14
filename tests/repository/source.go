@@ -1,6 +1,7 @@
 package testsrepository
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"fmt"
@@ -17,7 +18,7 @@ func NewSource(db *sql.DB) *Source {
 
 type SourceRow struct {
 	SiteURL string // empty: the feed url with /site
-	FeedURL string
+	FeedURL string // empty: no feed
 	Title   string
 	Status  string
 }
@@ -25,18 +26,19 @@ type SourceRow struct {
 func (r *Source) Insert(ctx context.Context, row SourceRow, now time.Time) (int64, error) {
 	title := row.Title
 	if title == "" {
-		title = row.FeedURL
+		title = cmp.Or(row.FeedURL, row.SiteURL)
 	}
 	siteURL := row.SiteURL
 	if siteURL == "" {
 		siteURL = fmt.Sprintf("%s/site", row.FeedURL)
 	}
+	feedURL := sql.NullString{String: row.FeedURL, Valid: row.FeedURL != ""}
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
 INSERT INTO source (site_url, feed_url, title, status, origin, status_changed_at, created_at, updated_at)
 VALUES (?, ?, ?, ?, 'user', ?, ?, ?)
 RETURNING id`,
-		siteURL, row.FeedURL, title, row.Status,
+		siteURL, feedURL, title, row.Status,
 		now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339)).Scan(&id)
 	return id, err
 }
@@ -112,4 +114,21 @@ func (r *Source) BackfilledAt(ctx context.Context, id int64) (sql.NullString, er
 	var backfilledAt sql.NullString
 	err := r.db.QueryRowContext(ctx, `SELECT backfilled_at FROM source WHERE id = ?`, id).Scan(&backfilledAt)
 	return backfilledAt, err
+}
+
+type SourceURLs struct {
+	SiteURL string
+	FeedURL sql.NullString
+}
+
+func (r *Source) URLs(ctx context.Context, id int64) (SourceURLs, error) {
+	var u SourceURLs
+	err := r.db.QueryRowContext(ctx, `SELECT site_url, feed_url FROM source WHERE id = ?`, id).Scan(&u.SiteURL, &u.FeedURL)
+	return u, err
+}
+
+func (r *Source) IDBySiteURL(ctx context.Context, siteURL string) (int64, error) {
+	var id int64
+	err := r.db.QueryRowContext(ctx, `SELECT id FROM source WHERE site_url = ?`, siteURL).Scan(&id)
+	return id, err
 }

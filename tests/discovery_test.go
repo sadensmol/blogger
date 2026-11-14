@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,8 @@ const (
 	emptyFeedPath = "/empty.xml"
 	goodReason    = "Writes about Go."
 	maxAdded      = 3
+	noFeedPage    = "/writing"
+	noFeedPageFmt = `<html><head><title>Writing</title></head><body>%s</body></html>`
 )
 
 type DiscoveryTestSuite struct {
@@ -64,8 +67,7 @@ func (s *DiscoveryTestSuite) discovery(order ...llm.Backend) *usecase.Discovery 
 	})
 	s.Require().NoError(err)
 	return usecase.NewDiscovery(usecase.DiscoveryData{
-		Sources: service.NewSource(repository.NewSource(s.DB), nil, s.Clock.Now),
-		Feeds:   feed.NewClient(5*time.Second, feed.WithLoopbackAllowed()),
+		Sources: service.NewSource(repository.NewSource(s.DB), feed.NewClient(5*time.Second, feed.WithLoopbackAllowed()), s.Clock.Now),
 		Runs:    service.NewRuns(repository.NewRun(s.DB), s.Clock.Now),
 		LLM:     llm.NewRunner(backends, s.T().TempDir(), llm.RunAs{}),
 	})
@@ -179,4 +181,46 @@ func (s *DiscoveryTestSuite) TestDiscoveryWithoutBlogsDoesNothing() {
 	result, err := s.runs.LatestByKind(s.Ctx, string(domain.RunKindDiscovery))
 	s.Require().NoError(err)
 	s.Equal(string(domain.RunStatusOK), result.Status)
+}
+
+func (s *DiscoveryTestSuite) answerPage(path string) {
+	s.agents.Answer(llm.Claude, llm.SkillDiscoverBlogs, map[string]any{"blogs": []map[string]any{{
+		"site_url": s.feedURL(path), "feed_url": "", "title": path, "about": "Essays.", "reason": goodReason,
+	}}})
+}
+
+func (s *DiscoveryTestSuite) setArticleList(path string, count int) {
+	var links strings.Builder
+	for i := range count {
+		fmt.Fprintf(&links, `<a href="%s/post-%d">Post %d</a>`, path, i, i)
+	}
+	s.feeds.Set(path, "text/html", fmt.Sprintf(noFeedPageFmt, links.String()))
+}
+
+func (s *DiscoveryTestSuite) TestDiscoveryAddsBlogWithoutFeedWhenItsPageListsThreeArticles() {
+	s.insertBlog(knownFeedPath)
+	s.setArticleList(noFeedPage, 3)
+	s.answerPage(noFeedPage)
+
+	added, err := s.discovery(llm.Claude).Run(s.Ctx)
+
+	s.Require().NoError(err)
+	s.Equal(1, added)
+	id, err := s.sources.IDBySiteURL(s.Ctx, s.feedURL(noFeedPage))
+	s.Require().NoError(err)
+	urls, err := s.sources.URLs(s.Ctx, id)
+	s.Require().NoError(err)
+	s.False(urls.FeedURL.Valid)
+}
+
+func (s *DiscoveryTestSuite) TestDiscoverySkipsBlogWithoutFeedWhosePageListsTwoArticles() {
+	s.insertBlog(knownFeedPath)
+	s.setArticleList(noFeedPage, 2)
+	s.answerPage(noFeedPage)
+
+	added, err := s.discovery(llm.Claude).Run(s.Ctx)
+
+	s.Require().NoError(err)
+	s.Zero(added)
+	s.Equal(1, s.CountRows("source"))
 }

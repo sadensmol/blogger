@@ -264,9 +264,11 @@ func (b blogJSON) toDomain() (domain.BlogProposal, error) {
 	if err != nil {
 		return domain.BlogProposal{}, fmt.Errorf("bad site url: %w", err)
 	}
-	feedURL, err := domain.ParseURL(b.FeedURL)
-	if err != nil {
-		return domain.BlogProposal{}, fmt.Errorf("bad feed url: %w", err)
+	var feedURL domain.URL
+	if b.FeedURL != "" {
+		if feedURL, err = domain.ParseURL(b.FeedURL); err != nil {
+			return domain.BlogProposal{}, fmt.Errorf("bad feed url: %w", err)
+		}
 	}
 	title := []rune(b.Title)
 	if len(title) > maxBlogTitle {
@@ -311,4 +313,68 @@ func (r *Runner) DiscoverBlogs(ctx context.Context, sources []domain.Source, max
 		return nil, "", err
 	}
 	return proposals, backend, nil
+}
+
+// a job with more links than this asks about the first ones; the rest wait for the next fetch
+const maxClassifiedLinks = 100
+
+type classifyJobInput struct {
+	BlogURL string     `json:"blog_url"`
+	Links   []linkJSON `json:"links"`
+}
+
+type linkJSON struct {
+	URL  string `json:"url"`
+	Text string `json:"text"`
+}
+
+type domainPageLink domain.PageLink
+
+func (l domainPageLink) toLinkJSON() linkJSON {
+	return linkJSON{URL: string(l.URL), Text: l.Text}
+}
+
+type classifyAnswer struct {
+	Articles []string `json:"articles"`
+}
+
+// ClassifyLinks asks which links of a blog page are articles. It maps each link it asked about to the answer.
+func (r *Runner) ClassifyLinks(ctx context.Context, blogURL domain.URL, links []domain.PageLink) (map[domain.URL]bool, Backend, error) {
+	links = links[:min(len(links), maxClassifiedLinks)]
+	linksJSON := make([]linkJSON, 0, len(links))
+	for _, link := range links {
+		linksJSON = append(linksJSON, domainPageLink(link).toLinkJSON())
+	}
+	req := jobRequest{
+		skill: SkillClassifyLinks,
+		input: classifyJobInput{BlogURL: string(blogURL), Links: linksJSON},
+	}
+
+	var verdicts map[domain.URL]bool
+	backend, err := r.run(ctx, req, func(raw []byte) error {
+		var answer classifyAnswer
+		if err := decodeAnswer(raw, &answer); err != nil {
+			return err
+		}
+		answered := make(map[domain.URL]bool, len(links))
+		for _, link := range links {
+			answered[link.URL] = false
+		}
+		for _, raw := range answer.Articles {
+			u, err := domain.ParseURL(raw)
+			if err != nil {
+				return fmt.Errorf("bad article url: %w", err)
+			}
+			if _, asked := answered[u]; !asked {
+				return fmt.Errorf("article url %s is not one of the links", u)
+			}
+			answered[u] = true
+		}
+		verdicts = answered
+		return nil
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	return verdicts, backend, nil
 }

@@ -490,7 +490,7 @@ func (s *SlackTestSuite) TestDiscoverWithoutNewBlogsSaysSo() {
 
 	s.discover()
 
-	s.Equal([]string{"Found no new blogs with a working feed. Try again later."}, s.slack.Posted())
+	s.Equal([]string{"Found no new blogs that can be read. Try again later."}, s.slack.Posted())
 	s.Empty(s.listProposals())
 }
 

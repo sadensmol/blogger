@@ -12,7 +12,7 @@ ARG UID=1000
 ARG CLAUDE_VERSION=2.1.318
 ARG CODEX_VERSION=0.169.0
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl \
+ && apt-get install -y --no-install-recommends ca-certificates curl chromium \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --uid ${UID} --create-home --home-dir /home/blogger --shell /bin/sh blogger \
  && curl -fsSL "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-aarch64-unknown-linux-musl.tar.gz" \

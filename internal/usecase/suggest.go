@@ -8,7 +8,6 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/sadensmol/blogger/internal/domain"
-	"github.com/sadensmol/blogger/internal/feed"
 	"github.com/sadensmol/blogger/internal/llm"
 	"github.com/sadensmol/blogger/internal/service"
 	"github.com/sadensmol/blogger/internal/slackpost"
@@ -17,7 +16,7 @@ import (
 const (
 	suggestMax = 10
 
-	noNewBlogsText    = "Found no new blogs with a working feed. Try again later."
+	noNewBlogsText    = "Found no new blogs that can be read. Try again later."
 	suggestAgentText  = "Could not look for blogs: no agent with web search answered. See the logs."
 	suggestFailedText = "Could not look for blogs. See the logs."
 )
@@ -25,7 +24,6 @@ const (
 type SuggestData struct {
 	Sources   *service.Source
 	Proposals *service.Proposals
-	Feeds     *feed.Client
 	Runs      *service.Runs
 	LLM       *llm.Runner
 	Poster    *slackpost.Poster
@@ -35,7 +33,6 @@ type SuggestData struct {
 type Suggest struct {
 	sources   *service.Source
 	proposals *service.Proposals
-	feeds     *feed.Client
 	runs      *service.Runs
 	llm       *llm.Runner
 	poster    *slackpost.Poster
@@ -45,7 +42,6 @@ func NewSuggest(d SuggestData) *Suggest {
 	return &Suggest{
 		sources:   d.Sources,
 		proposals: d.Proposals,
-		feeds:     d.Feeds,
 		runs:      d.Runs,
 		llm:       d.LLM,
 		poster:    d.Poster,
@@ -105,29 +101,24 @@ func (s *Suggest) suggest(ctx context.Context, runID domain.RunID) (llm.Backend,
 		if len(proposals) == suggestMax {
 			break
 		}
-		if seen[blog.FeedURL] {
+		if seen[blog.SiteURL] {
 			continue
 		}
-		seen[blog.FeedURL] = true
-		known, err := s.sources.Known(ctx, blog.FeedURL)
+		seen[blog.SiteURL] = true
+		known, err := s.sources.Known(ctx, blog.SiteURL, blog.FeedURL)
 		if err != nil {
 			return backend, fmt.Errorf("cannot check proposed blog: %w", err)
 		}
 		if known {
 			continue
 		}
-		items, err := s.feeds.Fetch(ctx, blog.FeedURL)
-		if err != nil {
-			log.Ctx(ctx).Warn().Err(err).Msgf("skip proposed blog %s: its feed does not load", blog.FeedURL)
-			continue
-		}
-		if len(items) == 0 {
-			log.Ctx(ctx).Warn().Msgf("skip proposed blog %s: its feed has no item", blog.FeedURL)
+		if blog.FeedURL, err = s.sources.ReadableFeed(ctx, blog.SiteURL, blog.FeedURL); err != nil {
+			log.Ctx(ctx).Warn().Err(err).Msgf("skip proposed blog %s", blog.SiteURL)
 			continue
 		}
 		proposal := domain.Proposal{RunID: runID, Blog: blog, Status: domain.ProposalProposed}
 		if proposal.ID, err = s.proposals.Create(ctx, proposal); err != nil {
-			return backend, fmt.Errorf("cannot keep proposed blog %s: %w", blog.FeedURL, err)
+			return backend, fmt.Errorf("cannot keep proposed blog %s: %w", blog.SiteURL, err)
 		}
 		proposals = append(proposals, proposal)
 	}
@@ -175,7 +166,7 @@ func (s *Suggest) Add(ctx context.Context, id domain.ProposalID) (bool, error) {
 		switch {
 		case err == nil:
 			added = true
-			log.Ctx(ctx).Info().Msgf("proposal %d added blog %d %s", id, src.ID, src.FeedURL)
+			log.Ctx(ctx).Info().Msgf("proposal %d added blog %d %s", id, src.ID, src.SiteURL)
 		case !errors.Is(err, domain.ErrAlreadyExists):
 			return false, fmt.Errorf("cannot add the blog of proposal %d: %w", id, err)
 		}

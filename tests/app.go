@@ -63,16 +63,6 @@ func NewApp(t *testing.T, d AppData) *App {
 		Sources:   sources,
 		Now:       d.Now,
 	})
-	articles := service.NewArticles(service.ArticlesData{
-		Sources: sources,
-		Repo:    repository.NewArticle(d.DB),
-		Feeds:   feeds,
-		Runs:    runs,
-		History: HistoryWindow,
-		RepeatAfter: RepeatAfter,
-		RepeatMax:   RepeatMax,
-		Now:     d.Now,
-	})
 	backends, err := llm.NewBackends(llm.Config{
 		Order:     d.Backends,
 		ClaudeBin: d.Agents.ClaudeBin,
@@ -83,6 +73,18 @@ func NewApp(t *testing.T, d AppData) *App {
 	})
 	require.NoError(t, err)
 	runner := llm.NewRunner(backends, t.TempDir(), llm.RunAs{})
+	articles := service.NewArticles(service.ArticlesData{
+		Sources:     sources,
+		Repo:        repository.NewArticle(d.DB),
+		Verdicts:    repository.NewLinkVerdict(d.DB),
+		Feeds:       feeds,
+		LLM:         runner,
+		Runs:        runs,
+		History:     HistoryWindow,
+		RepeatAfter: RepeatAfter,
+		RepeatMax:   RepeatMax,
+		Now:         d.Now,
+	})
 	poster := slackpost.NewPoster(
 		slack.New("xoxb-test", slack.OptionAPIURL(fmt.Sprintf("%s/api/", d.SlackURL))),
 		&http.Client{Timeout: appTimeout},
@@ -110,14 +112,12 @@ func NewApp(t *testing.T, d AppData) *App {
 		}),
 		Discovery: usecase.NewDiscovery(usecase.DiscoveryData{
 			Sources: sources,
-			Feeds:   feeds,
 			Runs:    runs,
 			LLM:     runner,
 		}),
 		Suggest: usecase.NewSuggest(usecase.SuggestData{
 			Sources:   sources,
 			Proposals: service.NewProposals(repository.NewProposal(d.DB), d.Now),
-			Feeds:     feeds,
 			Runs:      runs,
 			LLM:       runner,
 			Poster:    poster,

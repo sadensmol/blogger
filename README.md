@@ -6,7 +6,8 @@ Blogger is a Slack bot for one reader. It reads the blogs you follow and posts a
 
 ## 1. How the parts fit
 
-- **Bot.** One Go program (`blogger serve`). It fetches feeds every few hours, keeps everything in one SQLite file and posts to one Slack channel.
+- **Bot.** One Go program (`blogger serve`). Every few hours it reads each blog: its feed, when it has one, and the blog page that lists its posts. It keeps everything in one SQLite file and posts to one Slack channel.
+- **Headless Chromium (in the image).** When the plain HTML of a blog page lists no article, the bot renders the page in Chromium. Every request of the browser goes through the bot, which allows only public addresses. On a local run the bot uses Chromium or Chrome when it finds one, else it skips this step.
 - **LLM CLIs.** The bot does not call an LLM API. It starts the official `claude` CLI (your Claude subscription) or the `codex` CLI (your ChatGPT login) to pick articles, learn from votes and find new blogs. When one fails, it tries the next one. An optional local model runs through Codex and Ollama.
 - **Slack Socket Mode.** The bot opens an outgoing connection to Slack. It needs no public URL, no open port and no web server.
 - **SQLite.** Blogs, articles, posts and votes live in one file in the data folder.
@@ -65,7 +66,7 @@ Settings (all optional):
 | `BLOGGER_LOCAL_MODEL` | empty | Ollama model for `codex-oss`; empty turns it off |
 | `BLOGGER_OLLAMA_URL` | `http://ollama:11434/v1` | Ollama address |
 | `BLOGGER_REPEAT_AFTER`, `BLOGGER_REPEAT_MAX` | `168h`, `3` | when and how often an unrated article may come back |
-| `BLOGGER_FETCH_EVERY` | `3h` | feed fetch interval |
+| `BLOGGER_FETCH_EVERY` | `3h` | blog fetch interval |
 | `BLOGGER_LOG_LEVEL` | `info` | `debug` for more detail |
 
 ## 5. Local run
@@ -165,6 +166,7 @@ Check the log: `H 'timeout 20 docker logs --tail 50 blogger'`. Look for `blogger
 
 ## 8. The blog list
 
+- **A blog is its page.** Each entry has `url`: the page that lists the blog's posts, for example `https://mitchellh.com/writing`. `feed` is optional. The bot finds posts in the feed and on the page (and its next pages). Slack links to this page.
 - **First import.** `blogs.yaml` holds a starter list. Edit it, then load it. Locally:
 
   ```bash
@@ -172,7 +174,7 @@ Check the log: `H 'timeout 20 docker logs --tail 50 blogger'`. Look for `blogger
   ```
 
   In Docker: `H 'timeout 300 docker exec -i blogger blogger sources import --apply -' < blogs.yaml`. Without `--apply` the command only shows the changes.
-- **In Slack.** `/blogs list`, `/blogs add <url>`, `/blogs remove <id|url>`, `/blogs pause <id|url>`, `/blogs resume <id|url>`.
+- **In Slack.** `/blogs list`, `/blogs add <url>`, `/blogs remove <id|url>`, `/blogs pause <id|url>`, `/blogs resume <id|url>`. Add a blog by the page that lists its posts. A blog without a feed is added when that page lists at least 3 articles.
 - **Suggestions.** `/discover` searches the web for blogs like the ones you rate up. It posts up to 10 blogs, each with a **+ Add** button. It needs the `claude` or `codex` backend.
 - **In Claude Code.** The `manage-blogs` skill lists, adds and removes blogs and edits your interest notes (`## My notes`). It reaches the host through `BLOGGER_BOARD_HOST` or `~/.config/blogger/board-host`.
 

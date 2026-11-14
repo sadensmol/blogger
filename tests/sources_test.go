@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"bytes"
+	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -308,7 +309,7 @@ func (s *SourcesTestSuite) TestCLIAnswersForUserLevelFailures() {
 	bare.Set("/bare", htmlType, "<html></html>")
 	out, err = s.runCLI("", "add", bare.URL()+"/bare")
 	s.Require().NoError(err)
-	s.Equal(fmt.Sprintf("No feed found at %s/bare.\n", bare.URL()), out)
+	s.Equal(fmt.Sprintf("No feed and too few articles found at %s/bare.\n", bare.URL()), out)
 }
 
 func (s *SourcesTestSuite) TestCLIUnparseableRefMatchesNoBlog() {
@@ -327,7 +328,7 @@ func (s *SourcesTestSuite) TestCLIList() {
 	s.insertUpVotes(id, userOne)
 	out, err = s.runCLI("", "list")
 	s.Require().NoError(err)
-	s.Equal(fmt.Sprintf("#%d active +1/-0 Example — %s%s\n", id, s.feeds.URL(), feedPath), out)
+	s.Equal(fmt.Sprintf("#%d active +1/-0 Example — %s%s/site\n", id, s.feeds.URL(), feedPath), out)
 }
 
 func (s *SourcesTestSuite) TestCLIPauseByID() {
@@ -338,4 +339,62 @@ func (s *SourcesTestSuite) TestCLIPauseByID() {
 
 	s.Require().NoError(err)
 	s.Equal(fmt.Sprintf("Paused #%d Example.\n", id), out)
+}
+
+func (s *SourcesTestSuite) setArticleList(server *tests.FakeFeeds, path string, count int) {
+	var links strings.Builder
+	for i := range count {
+		fmt.Fprintf(&links, `<a href="%s/post-%d">Post %d</a>`, path, i, i)
+	}
+	server.Set(path, htmlType, fmt.Sprintf(`<html><head><title>%s</title></head><body>%s</body></html>`, blogTitle, links.String()))
+}
+
+func (s *SourcesTestSuite) TestAddPageWithoutFeedThatListsThreeArticles() {
+	const writingPath = "/writing"
+	bare := tests.NewFakeFeeds()
+	defer bare.Close()
+	s.setArticleList(bare, writingPath, 3)
+
+	src, err := s.svc.Add(s.Ctx, bare.URL()+writingPath)
+
+	s.Require().NoError(err)
+	s.Equal(domain.URL(bare.URL()+writingPath), src.SiteURL)
+	s.Empty(src.FeedURL)
+	s.Equal(blogTitle, src.Title)
+}
+
+func (s *SourcesTestSuite) TestImportAddsBlogWithoutFeed() {
+	const writingPath = "/writing"
+	bare := tests.NewFakeFeeds()
+	defer bare.Close()
+	s.setArticleList(bare, writingPath, 1)
+
+	out, err := s.runCLI(fmt.Sprintf("sources:\n  - url: %s%s\n    title: Writing\n", bare.URL(), writingPath), "import", "--apply")
+
+	s.Require().NoError(err)
+	s.Contains(out, fmt.Sprintf("+ add     %s%s (no feed)", bare.URL(), writingPath))
+	id, err := s.sources.IDBySiteURL(s.Ctx, bare.URL()+writingPath)
+	s.Require().NoError(err)
+	urls, err := s.sources.URLs(s.Ctx, id)
+	s.Require().NoError(err)
+	s.False(urls.FeedURL.Valid)
+}
+
+func (s *SourcesTestSuite) TestImportMovesABlogToTheNewPageOfItsFeed() {
+	id := s.insertSource(s.feeds.URL()+feedPath, blogTitle, domain.SourceActive)
+	s.insertUpVotes(id, userOne)
+
+	out, err := s.runCLI(fmt.Sprintf("sources:\n  - url: %s%s\n", s.feeds.URL(), blogPath), "import", "--apply")
+
+	s.Require().NoError(err)
+	s.Contains(out, "Applied 1 changes.")
+	urls, err := s.sources.URLs(s.Ctx, id)
+	s.Require().NoError(err)
+	s.Equal(testsrepository.SourceURLs{
+		SiteURL: s.feeds.URL() + blogPath,
+		FeedURL: sql.NullString{String: s.feeds.URL() + feedPath, Valid: true},
+	}, urls)
+	up, err := s.sources.UpVotes(s.Ctx, id)
+	s.Require().NoError(err)
+	s.Equal(1, up)
 }

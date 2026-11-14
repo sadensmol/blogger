@@ -21,6 +21,7 @@ func NewArticle(db *sql.DB) *Article {
 type articleRow struct {
 	id, sourceID  int64
 	sourceTitle   string
+	sourceURL     string
 	url, title    string
 	excerpt       string
 	publishedAt   sql.NullString
@@ -38,6 +39,7 @@ func (r repositoryArticle) toDomain() (domain.Article, error) {
 		ID:          domain.ArticleID(r.id),
 		SourceID:    domain.SourceID(r.sourceID),
 		SourceTitle: r.sourceTitle,
+		SourceURL:   domain.URL(r.sourceURL),
 		URL:         domain.URL(r.url),
 		Title:       r.title,
 		Excerpt:     r.excerpt,
@@ -92,7 +94,7 @@ func (r *Article) UpdateUndatedPublishedAt(ctx context.Context, u domain.URL, pu
 }
 
 const notVotedPostedFewerThanLastBeforeOfActiveOrTrialQueryFormat = `
-SELECT a.id, a.source_id, s.title, a.url, a.title, a.excerpt, a.published_at, COUNT(p.message_ts)
+SELECT a.id, a.source_id, s.title, s.site_url, a.url, a.title, a.excerpt, a.published_at, COUNT(p.message_ts)
 FROM article a
 JOIN source s ON s.id = a.source_id
 LEFT JOIN post p ON p.article_id = a.id
@@ -154,7 +156,7 @@ func (r *Article) listNotVoted(ctx context.Context, p notVotedParams) ([]domain.
 	articles := []domain.Article{}
 	for rows.Next() {
 		var row articleRow
-		if err := rows.Scan(&row.id, &row.sourceID, &row.sourceTitle, &row.url, &row.title, &row.excerpt, &row.publishedAt, &row.shown); err != nil {
+		if err := rows.Scan(&row.id, &row.sourceID, &row.sourceTitle, &row.sourceURL, &row.url, &row.title, &row.excerpt, &row.publishedAt, &row.shown); err != nil {
 			return nil, fmt.Errorf("cannot scan article: %w", err)
 		}
 		article, err := repositoryArticle(row).toDomain()

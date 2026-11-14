@@ -11,11 +11,18 @@ type Article struct {
 	ID          ArticleID
 	SourceID    SourceID
 	SourceTitle string
+	SourceURL   URL // the blog page; filled by the candidate finders
 	URL         URL
 	Title       string
 	Excerpt     string
 	PublishedAt time.Time // zero: the date is unknown
 	Shown       int       // times it was posted before; filled by the candidate finders
+}
+
+// PageLink is a link on a blog page with its text.
+type PageLink struct {
+	URL  URL
+	Text string
 }
 
 func newestFirst(a, b Article) int {

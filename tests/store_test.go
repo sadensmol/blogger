@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	migrationsCount = 12
+	migrationsCount = 13
 	feedURL         = "https://example.com/feed"
 	unknownSourceID = 999
 	userOne         = "U1"
@@ -175,6 +175,55 @@ func (s *StoreTestSuite) TestManyPostsMigrationKeepsPostsAndVotes() {
 	messages, err := testsrepository.NewPost(migrated).MessagesByURL(s.Ctx, "https://example.com/a")
 	s.Require().NoError(err)
 	s.Len(messages, 2)
+}
+
+func (s *StoreTestSuite) TestPageIdentityMigrationLeavesEachPageToOneBlog() {
+	const lastVersionWithFeedIdentity = 12
+	const sharedPage = "https://example.com/blog"
+	path := filepath.Join(s.T().TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	s.Require().NoError(err)
+	migrations, err := fs.Sub(blogdb.Migrations, "migrations")
+	s.Require().NoError(err)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, old, migrations)
+	s.Require().NoError(err)
+	_, err = provider.UpTo(s.Ctx, lastVersionWithFeedIdentity)
+	s.Require().NoError(err)
+	oldSources := testsrepository.NewSource(old)
+	insert := func(siteURL, feedURL string) int64 {
+		id, err := oldSources.Insert(s.Ctx, testsrepository.SourceRow{SiteURL: siteURL, FeedURL: feedURL, Status: string(domain.SourceActive)}, s.Clock.Now())
+		s.Require().NoError(err)
+		return id
+	}
+	removed := insert(sharedPage, "https://example.com/removed.xml")
+	s.Require().NoError(oldSources.MarkDeleted(s.Ctx, removed, s.Clock.Now()))
+	kept := insert(sharedPage, "https://example.com/kept.xml")
+	later := insert(sharedPage, "https://example.com/later.xml")
+	alone := insert("https://other.example.com/", "https://other.example.com/feed.xml")
+	_, err = testsrepository.NewArticle(old).Insert(s.Ctx, testsrepository.ArticleRow{SourceID: later, URL: "https://example.com/a", Now: s.Clock.Now()})
+	s.Require().NoError(err)
+	s.Require().NoError(old.Close())
+
+	migrated, err := repository.Open(s.Ctx, path)
+	s.Require().NoError(err)
+	defer func() { s.Require().NoError(migrated.Close()) }()
+
+	migratedSources := testsrepository.NewSource(migrated)
+	for id, want := range map[int64]testsrepository.SourceURLs{
+		removed: {SiteURL: "https://example.com/removed.xml", FeedURL: sql.NullString{String: "https://example.com/removed.xml", Valid: true}},
+		kept:    {SiteURL: sharedPage, FeedURL: sql.NullString{String: "https://example.com/kept.xml", Valid: true}},
+		later:   {SiteURL: "https://example.com/later.xml", FeedURL: sql.NullString{String: "https://example.com/later.xml", Valid: true}},
+		alone:   {SiteURL: "https://other.example.com/", FeedURL: sql.NullString{String: "https://other.example.com/feed.xml", Valid: true}},
+	} {
+		urls, err := migratedSources.URLs(s.Ctx, id)
+		s.Require().NoError(err)
+		s.Equal(want, urls)
+	}
+	var violations int
+	s.Require().NoError(migrated.QueryRowContext(s.Ctx, `SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&violations))
+	s.Equal(0, violations)
+	_, err = migratedSources.Insert(s.Ctx, testsrepository.SourceRow{SiteURL: "https://nofeed.example.com/", Status: string(domain.SourceActive)}, s.Clock.Now())
+	s.Require().NoError(err)
 }
 
 func (s *StoreTestSuite) TestForeignKeysAreOn() {

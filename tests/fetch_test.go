@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/sadensmol/blogger/internal/domain"
 	"github.com/sadensmol/blogger/internal/feed"
+	"github.com/sadensmol/blogger/internal/llm"
 	"github.com/sadensmol/blogger/internal/repository"
 	"github.com/sadensmol/blogger/internal/service"
 	"github.com/sadensmol/blogger/tests"
@@ -40,12 +42,20 @@ const (
 	urlFmt            = `<url><loc>%s</loc><lastmod>%s</lastmod></url>`
 	pageFmt           = `<!doctype html><html><head>%s</head><body><h1>ignored</h1></body></html>`
 	backfillMax       = 200
+
+	blogPagePath   = "/blog"
+	newsPagePath   = "/news"
+	blogPageFmt    = `<!doctype html><html><head><title>Blog</title>%s</head><body><nav><a href="/about">About</a></nav>%s</body></html>`
+	linkFmt        = `<a href="%s">%s</a>`
+	articleBodyFmt = `<!doctype html><html><head>%s</head><body>%s</body></html>`
 )
 
 type FetchTestSuite struct {
 	tests.Suite
 
 	feeds       *tests.FakeFeeds
+	agents      *tests.FakeAgents
+	renderer    *tests.FakeRenderer
 	sources     *testsrepository.Source
 	articleRows *testsrepository.Article
 	runs        *testsrepository.Run
@@ -63,15 +73,27 @@ func (s *FetchTestSuite) SetupTest() {
 	s.sources = testsrepository.NewSource(s.DB)
 	s.articleRows = testsrepository.NewArticle(s.DB)
 	s.runs = testsrepository.NewRun(s.DB)
+	s.agents = tests.NewFakeAgents(s.T())
+	s.renderer = tests.NewFakeRenderer()
 	sourceSvc := service.NewSource(repository.NewSource(s.DB), nil, s.Clock.Now)
 	s.runsSvc = service.NewRuns(repository.NewRun(s.DB), s.Clock.Now)
+	backends, err := llm.NewBackends(llm.Config{
+		Order:     []llm.Backend{llm.Claude},
+		ClaudeBin: s.agents.ClaudeBin,
+		RunAs:     llm.RunAs{Home: s.agents.Home},
+		AgentDir:  s.T().TempDir(),
+		Timeout:   10 * time.Second,
+	})
+	s.Require().NoError(err)
 	s.articles = service.NewArticles(service.ArticlesData{
-		Sources: sourceSvc,
-		Repo:    repository.NewArticle(s.DB),
-		Feeds:   feed.NewClient(5*time.Second, feed.WithLoopbackAllowed()),
-		Runs:    s.runsSvc,
-		History: tests.HistoryWindow,
-		Now:     s.Clock.Now,
+		Sources:  sourceSvc,
+		Repo:     repository.NewArticle(s.DB),
+		Verdicts: repository.NewLinkVerdict(s.DB),
+		Feeds:    feed.NewClient(5*time.Second, feed.WithLoopbackAllowed(), feed.WithRenderer(s.renderer)),
+		LLM:      llm.NewRunner(backends, s.T().TempDir(), llm.RunAs{}),
+		Runs:     s.runsSvc,
+		History:  tests.HistoryWindow,
+		Now:      s.Clock.Now,
 	})
 }
 
@@ -476,4 +498,162 @@ func (s *FetchTestSuite) TestUndatedFeedItemStaysUndatedUntilTheSitemapDatesIt()
 		{URL: s.feeds.URL() + "/posts/undated", Title: "Item 0", PublishedAt: sql.NullString{String: "2026-04-01T00:00:00Z", Valid: true}},
 		{URL: s.feeds.URL() + "/posts/never-dated", Title: "Item 1"},
 	}, s.stored(id))
+}
+
+func (s *FetchTestSuite) insertPageBlog(pagePath string) int64 {
+	id, err := s.sources.Insert(s.Ctx, testsrepository.SourceRow{
+		SiteURL: s.feeds.URL() + pagePath,
+		Status:  string(domain.SourceActive),
+	}, s.Clock.Now())
+	s.Require().NoError(err)
+	return id
+}
+
+func (s *FetchTestSuite) setBlogPage(path, head string, hrefs ...string) {
+	s.feeds.Set(path, htmlType, s.blogPage(head, hrefs...))
+}
+
+func (s *FetchTestSuite) blogPage(head string, hrefs ...string) string {
+	var links strings.Builder
+	for _, href := range hrefs {
+		fmt.Fprintf(&links, linkFmt, href, strings.Trim(href, "/"))
+	}
+	return fmt.Sprintf(blogPageFmt, head, links.String())
+}
+
+func (s *FetchTestSuite) setTitledPages(paths ...string) {
+	for _, path := range paths {
+		s.setPage(path, fmt.Sprintf("<title>%s</title>", strings.Trim(path, "/")))
+	}
+}
+
+func (s *FetchTestSuite) TestFetchReadsArticlesFromTheBlogPageAndItsNextPage() {
+	id := s.insertPageBlog(blogPagePath)
+	s.setBlogPage(blogPagePath, `<link rel="next" href="/blog?page=2">`,
+		"/blog/one", "/blog/two", "/blog/tag/go", "/blog/category/news", "/blog/author/ann", "/blog/logo.png", "/blog", "/blog/one#comments")
+	s.setBlogPage(blogPagePath+"?page=2", "", "/blog/three", "/blog?page=1")
+	s.setTitledPages("/blog/one", "/blog/two", "/blog/three")
+
+	created, err := s.articles.FetchAll(s.Ctx)
+
+	s.Require().NoError(err)
+	s.Equal(3, created)
+	s.ElementsMatch([]string{"/blog/one", "/blog/two", "/blog/three"}, s.storedURLs(id))
+	for _, listing := range []string{"/blog/tag/go", "/blog/category/news", "/blog/author/ann", "/blog/logo.png", "/about"} {
+		s.Zero(s.feeds.Requests(listing), listing)
+	}
+	s.Empty(s.renderer.Rendered())
+	s.Empty(s.agents.Args(llm.Claude))
+}
+
+func (s *FetchTestSuite) TestFetchStoresAnArticleOfBothTheFeedAndThePageOnce() {
+	s.setFeed(feedAPath, s.feeds.URL()+"/blog/one", s.feeds.URL()+"/blog/two")
+	id, err := s.sources.Insert(s.Ctx, testsrepository.SourceRow{
+		SiteURL: s.feeds.URL() + blogPagePath,
+		FeedURL: s.feeds.URL() + feedAPath,
+		Status:  string(domain.SourceActive),
+	}, s.Clock.Now())
+	s.Require().NoError(err)
+	s.setBlogPage(blogPagePath, "", "/blog/two", "/blog/three")
+	s.setTitledPages("/blog/three")
+
+	created, err := s.articles.FetchAll(s.Ctx)
+
+	s.Require().NoError(err)
+	s.Equal(3, created)
+	s.ElementsMatch([]string{"/blog/one", "/blog/two", "/blog/three"}, s.storedURLs(id))
+	s.Zero(s.feeds.Requests("/blog/two"))
+}
+
+func (s *FetchTestSuite) TestFetchReadsPageArticleDetailsFromJSONLDMetaAndTime() {
+	id := s.insertPageBlog(blogPagePath)
+	s.setBlogPage(blogPagePath, "", "/blog/ld", "/blog/meta", "/blog/time")
+	s.feeds.Set("/blog/ld", htmlType, fmt.Sprintf(articleBodyFmt,
+		`<title>Site | LD</title><meta name="description" content="LD description.">`,
+		`<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"WebSite","name":"Site"},`+
+			`{"@type":"BlogPosting","headline":"LD headline","datePublished":"2026-10-02T09:30:00.000Z"}]}</script><p>LD body.</p>`))
+	s.feeds.Set("/blog/meta", htmlType, fmt.Sprintf(articleBodyFmt,
+		`<meta property="og:title" content="Meta title"><meta property="og:description" content="Meta description.">`+
+			`<meta property="article:published_time" content="2026-09-03T10:00:00+00:00">`,
+		`<time datetime="2020-01-01">old</time><p>Meta body.</p>`))
+	s.feeds.Set("/blog/time", htmlType, fmt.Sprintf(articleBodyFmt,
+		`<title>Time title</title>`,
+		`<header><time datetime="2026-08-04">4 Aug</time></header><p>Sign in</p><p>First <b>real</b> paragraph, long enough to be text.</p><p>Second.</p>`))
+
+	_, err := s.articles.FetchAll(s.Ctx)
+
+	s.Require().NoError(err)
+	s.Equal([]testsrepository.StoredArticle{
+		{URL: s.feeds.URL() + "/blog/ld", Title: "LD headline", Excerpt: "LD description.", PublishedAt: sql.NullString{String: "2026-10-02T09:30:00Z", Valid: true}},
+		{URL: s.feeds.URL() + "/blog/meta", Title: "Meta title", Excerpt: "Meta description.", PublishedAt: sql.NullString{String: "2026-09-03T10:00:00Z", Valid: true}},
+		{URL: s.feeds.URL() + "/blog/time", Title: "Time title", Excerpt: "First real paragraph, long enough to be text.", PublishedAt: sql.NullString{String: "2026-08-04T00:00:00Z", Valid: true}},
+	}, s.stored(id))
+}
+
+func (s *FetchTestSuite) TestFetchRendersABlogPageWhoseHTMLListsNoArticle() {
+	id := s.insertPageBlog(blogPagePath)
+	s.setBlogPage(blogPagePath, "")
+	s.renderer.Set(domain.URL(s.feeds.URL()+blogPagePath), s.blogPage("", "/blog/one", "/blog/two"))
+	s.setTitledPages("/blog/one", "/blog/two")
+
+	created, err := s.articles.FetchAll(s.Ctx)
+
+	s.Require().NoError(err)
+	s.Equal(2, created)
+	s.ElementsMatch([]string{"/blog/one", "/blog/two"}, s.storedURLs(id))
+	s.Equal([]domain.URL{domain.URL(s.feeds.URL() + blogPagePath)}, s.renderer.Rendered())
+}
+
+func (s *FetchTestSuite) TestFetchNeverRendersThePageOfABlogWhoseFeedGivesItems() {
+	s.setFeed(feedAPath, s.feeds.URL()+"/posts/one")
+	_, err := s.sources.Insert(s.Ctx, testsrepository.SourceRow{
+		SiteURL: s.feeds.URL() + blogPagePath,
+		FeedURL: s.feeds.URL() + feedAPath,
+		Status:  string(domain.SourceActive),
+	}, s.Clock.Now())
+	s.Require().NoError(err)
+	s.setBlogPage(blogPagePath, "", "/posts/one", "/elsewhere")
+
+	_, err = s.articles.FetchAll(s.Ctx)
+
+	s.Require().NoError(err)
+	s.Empty(s.renderer.Rendered())
+	s.Empty(s.agents.Args(llm.Claude))
+}
+
+func (s *FetchTestSuite) TestFetchAsksTheAgentOnlyAboutNewUnclearLinks() {
+	id := s.insertPageBlog(newsPagePath)
+	s.setBlogPage(newsPagePath, "", "/posts/x", "/posts/y")
+	s.renderer.Set(domain.URL(s.feeds.URL()+newsPagePath), s.blogPage("", "/posts/x", "/posts/y"))
+	s.setTitledPages("/posts/x", "/posts/y", "/posts/z")
+	s.agents.Answer(llm.Claude, llm.SkillClassifyLinks, map[string]any{"articles": []string{s.feeds.URL() + "/posts/x", s.feeds.URL() + "/posts/y"}})
+
+	_, err := s.articles.FetchAll(s.Ctx)
+	s.Require().NoError(err)
+	s.Require().ElementsMatch([]string{"/posts/x", "/posts/y"}, s.storedURLs(id))
+	s.Require().Len(s.agents.Args(llm.Claude), 1)
+	s.Equal(3, s.CountRows("link_verdict"))
+
+	s.setBlogPage(newsPagePath, "", "/posts/z", "/posts/x", "/posts/y")
+	s.renderer.Set(domain.URL(s.feeds.URL()+newsPagePath), s.blogPage("", "/posts/z", "/posts/x", "/posts/y"))
+	s.agents.Answer(llm.Claude, llm.SkillClassifyLinks, map[string]any{"articles": []string{s.feeds.URL() + "/posts/z"}})
+	_, err = s.articles.FetchAll(s.Ctx)
+	s.Require().NoError(err)
+
+	s.ElementsMatch([]string{"/posts/x", "/posts/y", "/posts/z"}, s.storedURLs(id))
+	s.Require().Len(s.agents.Args(llm.Claude), 2)
+	var input struct {
+		BlogURL string `json:"blog_url"`
+		Links   []struct {
+			URL string `json:"url"`
+		} `json:"links"`
+	}
+	s.Require().NoError(json.Unmarshal(s.agents.Input(llm.Claude, llm.SkillClassifyLinks), &input))
+	s.Equal(s.feeds.URL()+newsPagePath, input.BlogURL)
+	s.Require().Len(input.Links, 1)
+	s.Equal(s.feeds.URL()+"/posts/z", input.Links[0].URL)
+
+	_, err = s.articles.FetchAll(s.Ctx)
+	s.Require().NoError(err)
+	s.Len(s.agents.Args(llm.Claude), 2)
 }

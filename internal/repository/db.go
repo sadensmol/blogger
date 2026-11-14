@@ -13,6 +13,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/sadensmol/blogger/db"
+	"github.com/sadensmol/blogger/internal/domain"
 )
 
 func Open(ctx context.Context, path string) (*sql.DB, error) {
@@ -55,6 +56,10 @@ func formatOptionalTime(t time.Time) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: formatTime(t), Valid: true}
+}
+
+func optionalURL(u domain.URL) sql.NullString {
+	return sql.NullString{String: string(u), Valid: u != ""}
 }
 
 func parseTime(s string) (time.Time, error) {

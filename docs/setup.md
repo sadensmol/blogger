@@ -38,7 +38,7 @@ Use two Slack apps. Two Socket Mode connections of one app split the events. The
 ## 3. Managing blogs and notes
 
 - **In Slack.** Use `/blogs list`, `/blogs add <url>`, `/blogs remove <id|url>`, `/blogs pause <id|url>` and `/blogs resume <id|url>`.
-- **Suggestions.** Use `/discover`. The bot searches the web for blogs like the ones you vote up. It posts up to 10 blogs with a working feed, each with a short description, a link and a **+ Add** button. Click **+ Add** to add the blog as active. Only your clicks count.
+- **Suggestions.** Use `/discover`. The bot searches the web for blogs like the ones you vote up. It posts up to 10 blogs with a working feed or with at least 3 articles on their page, each with a short description, a link and a **+ Add** button. Click **+ Add** to add the blog as active. Only your clicks count.
 - **In Claude Code.** The skill `manage-blogs` (`.claude/skills/manage-blogs/SKILL.md`) lists, adds, removes, pauses and resumes blogs. It also shows and changes the interest notes. It works on the board and in local test mode.
 - The bot never changes `## My notes`. Change the notes only through Claude Code on the Mac.
 

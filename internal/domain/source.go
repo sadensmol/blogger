@@ -39,15 +39,16 @@ func (v Votes) Net() int {
 
 type Source struct {
 	ID               SourceID
-	SiteURL, FeedURL URL
+	SiteURL          URL // the page that lists the blog's posts: the blog's identity
+	FeedURL          URL // empty: the blog has no feed
 	Title, Reason    string
 	Status           SourceStatus
 	Origin           SourceOrigin
 	StatusChangedAt  time.Time
 	Votes            Votes // all time, for lists
 	VotesSinceStatus Votes // since StatusChangedAt, for the status rule
-	FetchedAt        time.Time // the last read of the feed that worked
-	FetchFailedAt    time.Time // the last read of the feed that failed
+	FetchedAt        time.Time // the last fetch of the blog that worked
+	FetchFailedAt    time.Time // the last fetch of the blog that failed
 	BackfilledAt     time.Time // when older articles were collected
 	BackfillTries    int       // backfills that collected nothing
 	BackfillTriedAt  time.Time
@@ -59,11 +60,15 @@ const (
 	backfillRetryAfter = 24 * time.Hour
 )
 
+func (s Source) HasFeed() bool {
+	return s.FeedURL != ""
+}
+
 func (s Source) NeverFetched() bool {
 	return s.FetchedAt.IsZero()
 }
 
-// FeedBackedOff reports a feed that failed within the last hour: it is not read again yet.
+// FeedBackedOff reports a blog whose fetch failed within the last hour: it is not read again yet.
 func (s Source) FeedBackedOff(now time.Time) bool {
 	return !s.FetchFailedAt.IsZero() && now.Sub(s.FetchFailedAt) < feedBackoff
 }
@@ -88,7 +93,7 @@ func (s Source) StatusAfterVotes() SourceStatus {
 	}
 }
 
-// SourceSpec is one import entry.
+// SourceSpec is one import entry. URL is the blog page; FeedURL is empty when the entry names no feed.
 type SourceSpec struct {
 	URL, FeedURL URL
 	Title        string

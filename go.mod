@@ -16,7 +16,10 @@ require (
 )
 
 require (
+	github.com/chromedp/cdproto v0.160.1 // indirect
+	github.com/chromedp/chromedp v0.23.1 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

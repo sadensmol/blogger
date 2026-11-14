@@ -24,10 +24,10 @@ func (r *Proposal) Create(ctx context.Context, p domain.Proposal, now time.Time)
 INSERT INTO blog_proposal (run_id, site_url, feed_url, title, about, status, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id`,
-		p.RunID, p.Blog.SiteURL, p.Blog.FeedURL, p.Blog.Title, p.Blog.About, p.Status, formatTime(now), formatTime(now),
+		p.RunID, p.Blog.SiteURL, optionalURL(p.Blog.FeedURL), p.Blog.Title, p.Blog.About, p.Status, formatTime(now), formatTime(now),
 	).Scan(&id)
 	if err != nil {
-		return 0, fmt.Errorf("cannot create proposal of blog %s: %w", p.Blog.FeedURL, err)
+		return 0, fmt.Errorf("cannot create proposal of blog %s: %w", p.Blog.SiteURL, err)
 	}
 	return domain.ProposalID(id), nil
 }
@@ -60,8 +60,8 @@ func (r *Proposal) DeleteByRunID(ctx context.Context, runID domain.RunID) error 
 
 type proposalRow struct {
 	id, runID                      int64
-	channelID, messageTS           sql.NullString
-	siteURL, feedURL, title, about string
+	channelID, messageTS, feedURL  sql.NullString
+	siteURL, title, about          string
 	status                         string
 }
 
@@ -79,7 +79,7 @@ func (r repositoryProposal) toDomain() (domain.Proposal, error) {
 		MessageTS: r.messageTS.String,
 		Blog: domain.BlogProposal{
 			SiteURL: domain.URL(r.siteURL),
-			FeedURL: domain.URL(r.feedURL),
+			FeedURL: domain.URL(r.feedURL.String),
 			Title:   r.title,
 			About:   r.about,
 		},

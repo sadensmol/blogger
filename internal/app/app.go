@@ -116,7 +116,18 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	}
 	log.Ctx(ctx).Info().Msgf("marked %d interrupted runs as failed", interrupted)
 
-	feeds := feed.NewClient(feedTimeout, feed.WithHostDelay(feedHostDelay))
+	feedOptions := []feed.Option{feed.WithHostDelay(feedHostDelay)}
+	if bin := feed.FindChromium(); bin != "" {
+		log.Ctx(ctx).Info().Msgf("pages that need a browser are rendered by %s", bin)
+		feedOptions = append(feedOptions, feed.WithRenderer(feed.NewChromium(feed.ChromiumData{
+			Bin:        bin,
+			Credential: runAs.Credential,
+			Home:       runAs.Home,
+		})))
+	} else {
+		log.Ctx(ctx).Info().Msg("no Chromium or Chrome found: pages that need a browser are read without one")
+	}
+	feeds := feed.NewClient(feedTimeout, feedOptions...)
 	sources := service.NewSource(repository.NewSource(db), feeds, time.Now)
 	posts := service.NewPosts(repository.NewPost(db), time.Now)
 	votes := service.NewVotes(service.VotesData{
@@ -124,16 +135,6 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 		Posts:     posts,
 		Sources:   sources,
 		Now:       time.Now,
-	})
-	articles := service.NewArticles(service.ArticlesData{
-		Sources: sources,
-		Repo:    repository.NewArticle(db),
-		Feeds:   feeds,
-		Runs:    runs,
-		History: time.Duration(cfg.HistoryDays) * 24 * time.Hour,
-		RepeatAfter: cfg.RepeatAfter,
-		RepeatMax:   cfg.RepeatMax,
-		Now:     time.Now,
 	})
 
 	var order []llm.Backend
@@ -159,6 +160,18 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 		jobsDir = filepath.Join(cfg.DataDir, jobsDirName)
 	}
 	runner := llm.NewRunner(backends, jobsDir, runAs)
+	articles := service.NewArticles(service.ArticlesData{
+		Sources:     sources,
+		Repo:        repository.NewArticle(db),
+		Verdicts:    repository.NewLinkVerdict(db),
+		Feeds:       feeds,
+		LLM:         runner,
+		Runs:        runs,
+		History:     time.Duration(cfg.HistoryDays) * 24 * time.Hour,
+		RepeatAfter: cfg.RepeatAfter,
+		RepeatMax:   cfg.RepeatMax,
+		Now:         time.Now,
+	})
 
 	slackHTTP := &http.Client{Timeout: slackTimeout}
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken), slack.OptionHTTPClient(slackHTTP))
@@ -166,7 +179,6 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	suggest := usecase.NewSuggest(usecase.SuggestData{
 		Sources:   sources,
 		Proposals: service.NewProposals(repository.NewProposal(db), time.Now),
-		Feeds:     feeds,
 		Runs:      runs,
 		LLM:       runner,
 		Poster:    poster,
@@ -187,7 +199,6 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 		}),
 		Discovery: usecase.NewDiscovery(usecase.DiscoveryData{
 			Sources: sources,
-			Feeds:   feeds,
 			Runs:    runs,
 			LLM:     runner,
 		}),

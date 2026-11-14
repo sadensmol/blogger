@@ -18,7 +18,7 @@ func Checking(rawURL string) string {
 }
 
 func SourceAdded(src domain.Source) string {
-	return fmt.Sprintf("Added #%d %s (%s).", src.ID, src.Title, src.FeedURL)
+	return fmt.Sprintf("Added #%d %s (%s).", src.ID, src.Title, src.SiteURL)
 }
 
 func SourceRemoved(src domain.Source) string {
@@ -34,7 +34,7 @@ func SourceResumed(src domain.Source) string {
 }
 
 func SourceLine(src domain.Source) string {
-	return fmt.Sprintf("#%d %s +%d/-%d %s — %s", src.ID, src.Status, src.Votes.Up, src.Votes.Down, src.Title, src.FeedURL)
+	return fmt.Sprintf("#%d %s +%d/-%d %s — %s", src.ID, src.Status, src.Votes.Up, src.Votes.Down, src.Title, src.SiteURL)
 }
 
 func AddFailed(err error, rawURL string) (string, bool) {
@@ -42,7 +42,7 @@ func AddFailed(err error, rawURL string) (string, bool) {
 	case errors.Is(err, domain.ErrAlreadyExists):
 		return "Already in the list.", true
 	case errors.Is(err, domain.ErrNotFound):
-		return fmt.Sprintf("No feed found at %s.", rawURL), true
+		return fmt.Sprintf("No feed and too few articles found at %s.", rawURL), true
 	default:
 		return "", false
 	}

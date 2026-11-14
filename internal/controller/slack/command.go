@@ -223,7 +223,7 @@ func (h *Handler) addBlogLater(responseURL, rawURL string) {
 		text, known := controllertext.AddFailed(err, rawURL)
 		switch {
 		case err == nil:
-			log.Ctx(ctx).Info().Msgf("/blogs add: blog %d %s", src.ID, src.FeedURL)
+			log.Ctx(ctx).Info().Msgf("/blogs add: blog %d %s", src.ID, src.SiteURL)
 			text = controllertext.SourceAdded(src)
 		case !known:
 			log.Ctx(ctx).Error().Err(err).Msgf("/blogs add %s failed", rawURL)

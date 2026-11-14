@@ -36,9 +36,10 @@ var (
 )
 
 type Client struct {
-	http   *http.Client
-	parser *gofeed.Parser
-	gates  *hostGates // nil: no pause between requests
+	http     *http.Client
+	parser   *gofeed.Parser
+	gates    *hostGates // nil: no pause between requests
+	renderer IRenderer  // nil: no browser
 }
 
 type Info struct {
@@ -59,6 +60,7 @@ type Option func(*options)
 type options struct {
 	allowLoopback bool
 	hostDelay     time.Duration
+	renderer      IRenderer
 }
 
 func WithLoopbackAllowed() Option {
@@ -76,22 +78,15 @@ func NewClient(timeout time.Duration, opts ...Option) *Client {
 		opt(&cfg)
 	}
 
-	dialer := &net.Dialer{
-		Timeout: timeout,
-		Control: func(_, address string, _ syscall.RawConn) error {
-			return checkDialAddress(address, cfg.allowLoopback)
-		},
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	transport.DialContext = dialer.DialContext
+	transport := strictTransport(timeout, cfg.allowLoopback)
 
 	var gates *hostGates
 	if cfg.hostDelay > 0 {
 		gates = &hostGates{delay: cfg.hostDelay, hosts: map[string]chan time.Time{}}
 	}
 	return &Client{
-		gates: gates,
+		gates:    gates,
+		renderer: cfg.renderer,
 		http: &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
@@ -105,6 +100,23 @@ func NewClient(timeout time.Duration, opts ...Option) *Client {
 		},
 		parser: gofeed.NewParser(),
 	}
+}
+
+// strictDialer dials only public addresses, unless allowLoopback lets loopback through too.
+func strictDialer(timeout time.Duration, allowLoopback bool) *net.Dialer {
+	return &net.Dialer{
+		Timeout: timeout,
+		Control: func(_, address string, _ syscall.RawConn) error {
+			return checkDialAddress(address, allowLoopback)
+		},
+	}
+}
+
+func strictTransport(timeout time.Duration, allowLoopback bool) *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.DialContext = strictDialer(timeout, allowLoopback).DialContext
+	return transport
 }
 
 func checkScheme(target *url.URL) error {

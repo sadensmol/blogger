@@ -7,7 +7,6 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/sadensmol/blogger/internal/domain"
-	"github.com/sadensmol/blogger/internal/feed"
 	"github.com/sadensmol/blogger/internal/llm"
 	"github.com/sadensmol/blogger/internal/service"
 )
@@ -19,20 +18,18 @@ const (
 
 type DiscoveryData struct {
 	Sources *service.Source
-	Feeds   *feed.Client
 	Runs    *service.Runs
 	LLM     *llm.Runner
 }
 
 type Discovery struct {
 	sources *service.Source
-	feeds   *feed.Client
 	runs    *service.Runs
 	llm     *llm.Runner
 }
 
 func NewDiscovery(d DiscoveryData) *Discovery {
-	return &Discovery{sources: d.Sources, feeds: d.Feeds, runs: d.Runs, llm: d.LLM}
+	return &Discovery{sources: d.Sources, runs: d.Runs, llm: d.LLM}
 }
 
 // Run returns how many trial blogs it added.
@@ -70,31 +67,27 @@ func (d *Discovery) discover(ctx context.Context) (int, llm.Backend, error) {
 		if added == discoveryAdds {
 			break
 		}
-		known, err := d.sources.Known(ctx, p.FeedURL)
+		known, err := d.sources.Known(ctx, p.SiteURL, p.FeedURL)
 		if err != nil {
 			return added, backend, fmt.Errorf("cannot check proposed blog: %w", err)
 		}
 		if known {
 			continue
 		}
-		items, err := d.feeds.Fetch(ctx, p.FeedURL)
+		feedURL, err := d.sources.ReadableFeed(ctx, p.SiteURL, p.FeedURL)
 		if err != nil {
-			log.Ctx(ctx).Warn().Err(err).Msgf("skip proposed blog %s: its feed does not load", p.FeedURL)
-			continue
-		}
-		if len(items) == 0 {
-			log.Ctx(ctx).Warn().Msgf("skip proposed blog %s: its feed has no item", p.FeedURL)
+			log.Ctx(ctx).Warn().Err(err).Msgf("skip proposed blog %s", p.SiteURL)
 			continue
 		}
 		if _, err := d.sources.Create(ctx, domain.Source{
 			SiteURL: p.SiteURL,
-			FeedURL: p.FeedURL,
+			FeedURL: feedURL,
 			Title:   p.Title,
 			Reason:  p.Reason,
 			Status:  domain.SourceTrial,
 			Origin:  domain.OriginDiscovered,
 		}); err != nil {
-			return added, backend, fmt.Errorf("cannot add proposed blog %s: %w", p.FeedURL, err)
+			return added, backend, fmt.Errorf("cannot add proposed blog %s: %w", p.SiteURL, err)
 		}
 		added++
 	}

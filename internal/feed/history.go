@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"net/url"
@@ -20,14 +21,15 @@ import (
 )
 
 const (
-	maxSitemaps  = 20
-	maxTitleRune = 300
+	maxSitemaps      = 20
+	maxTitleRune     = 300
+	minParagraphRune = 40
 )
 
 var (
 	defaultSitemapPaths = []string{"/sitemap.xml", "/sitemap_index.xml"}
-	sitemapTimeLayouts  = []string{time.RFC3339, "2006-01-02T15:04Z07:00", time.DateOnly}
-	listingSections     = []string{"tag", "tags", "category", "categories", "author"}
+	sitemapTimeLayouts  = []string{time.RFC3339, "2006-01-02T15:04Z07:00", "2006-01-02T15:04:05", time.DateOnly}
+	listingSections     = []string{"tag", "tags", "category", "categories", "author", "authors", "topic", "topics", "page", "search"}
 )
 
 type SitemapEntry struct {
@@ -37,7 +39,7 @@ type SitemapEntry struct {
 
 type ArticleInfo struct {
 	Title, Description string
-	PublishedAt        time.Time // zero: the page gives no article:published_time
+	PublishedAt        time.Time // zero: the page gives no date
 }
 
 type sitemapXML struct {
@@ -207,7 +209,10 @@ func isArticleOf(site *url.URL, page domain.URL) bool {
 	return true
 }
 
-// ReadArticle reads the title, description and date of an article page: the og tags first, then <title> and the meta description.
+// ReadArticle reads the title, description and date of an article page.
+// Title: og:title, else the JSON-LD headline, else <title>. Date: the JSON-LD datePublished, else
+// article:published_time, else the first <time datetime>. Description: og:description, else the meta description,
+// else the first paragraph long enough to be text, not a button label.
 func (c *Client) ReadArticle(ctx context.Context, pageURL domain.URL) (ArticleInfo, error) {
 	body, err := c.get(ctx, pageURL, maxPageBytes)
 	if err != nil {
@@ -215,47 +220,104 @@ func (c *Client) ReadArticle(ctx context.Context, pageURL domain.URL) (ArticleIn
 	}
 
 	meta := map[string]string{}
-	var title strings.Builder
-	inTitle := false
+	var title, script, paragraph strings.Builder
+	var headline, datePublished, timeAttr, firstParagraph string
+	inTitle, inScript, inParagraph := false, false, false
 	tokens := html.NewTokenizer(bytes.NewReader(body))
 	for done := false; !done; {
 		switch tokens.Next() {
 		case html.ErrorToken:
 			done = true
 		case html.TextToken:
-			if inTitle {
+			switch {
+			case inTitle:
 				title.Write(tokens.Text())
+			case inScript:
+				script.Write(tokens.Text())
+			case inParagraph:
+				paragraph.Write(tokens.Text())
 			}
 		case html.EndTagToken:
 			name, _ := tokens.TagName()
-			inTitle = inTitle && string(name) != "title"
-			done = string(name) == "head"
-		case html.StartTagToken, html.SelfClosingTagToken:
-			name, hasAttr := tokens.TagName()
 			switch string(name) {
 			case "title":
-				inTitle = true
-			case "body":
-				done = true
-			case "meta":
-				attrs := map[string]string{}
-				for hasAttr {
-					var key, value []byte
-					key, value, hasAttr = tokens.TagAttr()
-					attrs[string(key)] = string(value)
+				inTitle = false
+			case "script":
+				if inScript {
+					ldHeadline, ldPublished := readJSONLD(script.String())
+					headline = cmp.Or(headline, ldHeadline)
+					datePublished = cmp.Or(datePublished, ldPublished)
 				}
-				meta[strings.ToLower(cmp.Or(attrs["property"], attrs["name"]))] = attrs["content"]
+				inScript = false
+			case "p":
+				if text := excerpt(paragraph.String()); inParagraph && len([]rune(text)) >= minParagraphRune {
+					firstParagraph = text
+				}
+				inParagraph = false
+			}
+		case html.StartTagToken, html.SelfClosingTagToken:
+			name, hasAttr := tokens.TagName()
+			attrs := map[string]string{}
+			for hasAttr {
+				var key, value []byte
+				key, value, hasAttr = tokens.TagAttr()
+				attrs[string(key)] = string(value)
+			}
+			switch string(name) {
+			case "title":
+				inTitle = title.Len() == 0
+			case "meta":
+				key := strings.ToLower(cmp.Or(attrs["property"], attrs["name"]))
+				meta[key] = cmp.Or(meta[key], attrs["content"])
+			case "script":
+				inScript = strings.EqualFold(strings.TrimSpace(attrs["type"]), "application/ld+json")
+				script.Reset()
+			case "time":
+				timeAttr = cmp.Or(timeAttr, attrs["datetime"])
+			case "p":
+				inParagraph = firstParagraph == ""
+				paragraph.Reset()
 			}
 		}
 	}
 
-	titleRunes := []rune(excerpt(cmp.Or(meta["og:title"], title.String())))
+	titleRunes := []rune(excerpt(cmp.Or(meta["og:title"], headline, title.String())))
 	if len(titleRunes) > maxTitleRune {
 		titleRunes = titleRunes[:maxTitleRune]
 	}
 	return ArticleInfo{
 		Title:       string(titleRunes),
-		Description: excerpt(cmp.Or(meta["og:description"], meta["description"])),
-		PublishedAt: parseSitemapTime(meta["article:published_time"]),
+		Description: excerpt(cmp.Or(meta["og:description"], meta["description"], firstParagraph)),
+		PublishedAt: cmp.Or(parseSitemapTime(datePublished), parseSitemapTime(meta["article:published_time"]), parseSitemapTime(timeAttr)),
 	}, nil
+}
+
+// readJSONLD finds the first headline and datePublished in a JSON-LD script, at any depth: they often sit in an @graph.
+func readJSONLD(raw string) (string, string) {
+	var doc any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return "", ""
+	}
+	var headline, published string
+	var walk func(node any)
+	walk = func(node any) {
+		switch value := node.(type) {
+		case map[string]any:
+			if s, ok := value["headline"].(string); ok {
+				headline = cmp.Or(headline, s)
+			}
+			if s, ok := value["datePublished"].(string); ok {
+				published = cmp.Or(published, s)
+			}
+			for _, child := range value {
+				walk(child)
+			}
+		case []any:
+			for _, child := range value {
+				walk(child)
+			}
+		}
+	}
+	walk(doc)
+	return headline, published
 }

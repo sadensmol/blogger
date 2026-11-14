@@ -1,6 +1,7 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/sadensmol/blogger/internal/domain"
 	"github.com/sadensmol/blogger/internal/feed"
+	"github.com/sadensmol/blogger/internal/llm"
 	"github.com/sadensmol/blogger/internal/repository"
 )
 
@@ -25,13 +27,16 @@ const (
 	backfillFeedPages = 50
 	backfillFailures  = 5
 	sitemapEntriesMax = 3 * backfillMax
+	pageArticleReads  = 20
 )
 
 type Articles struct {
-	sources *Source
-	repo    *repository.Article
-	feeds   *feed.Client
-	runs    *Runs
+	sources  *Source
+	repo     *repository.Article
+	verdicts *repository.LinkVerdict
+	feeds    *feed.Client
+	llm      *llm.Runner
+	runs     *Runs
 	history time.Duration
 	repeatAfter time.Duration
 	repeatMax   int
@@ -42,10 +47,12 @@ type Articles struct {
 }
 
 type ArticlesData struct {
-	Sources *Source
-	Repo    *repository.Article
-	Feeds   *feed.Client
-	Runs    *Runs
+	Sources  *Source
+	Repo     *repository.Article
+	Verdicts *repository.LinkVerdict
+	Feeds    *feed.Client
+	LLM      *llm.Runner // asks which links of a blog page are articles when no rule tells
+	Runs     *Runs
 	History time.Duration // how far back an article is still worth reading
 	// an article the owner never voted on comes back RepeatAfter its last post, until it was posted RepeatMax times
 	RepeatAfter time.Duration
@@ -55,10 +62,12 @@ type ArticlesData struct {
 
 func NewArticles(d ArticlesData) *Articles {
 	return &Articles{
-		sources: d.Sources,
-		repo:    d.Repo,
-		feeds:   d.Feeds,
-		runs:    d.Runs,
+		sources:  d.Sources,
+		repo:     d.Repo,
+		verdicts: d.Verdicts,
+		feeds:    d.Feeds,
+		llm:      d.LLM,
+		runs:     d.Runs,
 		history: d.History,
 		repeatAfter: d.RepeatAfter,
 		repeatMax:   d.RepeatMax,
@@ -207,7 +216,7 @@ func (a *Articles) fetchFeeds(ctx context.Context, sources []domain.Source) int 
 		created, err := a.fetchSource(ctx, src)
 		release()
 		if err != nil {
-			log.Ctx(ctx).Warn().Err(err).Msgf("skipping blog %d (%s)", src.ID, src.FeedURL)
+			log.Ctx(ctx).Warn().Err(err).Msgf("skipping blog %d (%s)", src.ID, src.SiteURL)
 			if err := a.sources.MarkFetchFailed(ctx, src.ID); err != nil {
 				log.Ctx(ctx).Warn().Err(err).Msgf("blog %d will not wait before its next fetch", src.ID)
 			}
@@ -222,22 +231,154 @@ func (a *Articles) fetchFeeds(ctx context.Context, sources []domain.Source) int 
 	return total
 }
 
+// fetchSource reads the blog's feed and its page. A blog fails only when nothing of it can be read:
+// its feed, or its page when it has no feed.
+// The browser and the agent help only a blog whose feed gives nothing: the feed knows the articles already.
 func (a *Articles) fetchSource(ctx context.Context, src domain.Source) (int, error) {
-	items, err := a.feeds.Fetch(ctx, src.FeedURL)
+	origin, err := a.repo.FindLatestURLBySource(ctx, src.ID)
 	if err != nil {
-		return 0, fmt.Errorf("cannot read feed %s: %w", src.FeedURL, err)
+		if !errors.Is(err, domain.ErrNotFound) {
+			log.Ctx(ctx).Warn().Err(err).Msgf("blog %d page articles use the page url for their urls", src.ID)
+		}
+		origin = src.SiteURL
 	}
-	created := 0
-	for _, item := range items {
-		isNew, err := a.store(ctx, src.ID, item)
+
+	created, fromFeed := 0, 0
+	var feedErr error
+	if src.HasFeed() {
+		items, err := a.feeds.Fetch(ctx, src.FeedURL)
 		if err != nil {
-			return created, err
+			feedErr = fmt.Errorf("cannot read feed %s: %w", src.FeedURL, err)
+		}
+		fromFeed = len(items)
+		for _, item := range items {
+			isNew, err := a.store(ctx, src.ID, item)
+			if err != nil {
+				return created, err
+			}
+			if isNew {
+				created++
+			}
+		}
+	}
+
+	fromPage, pageErr := a.fetchPage(ctx, src, origin, fromFeed == 0)
+	switch {
+	case pageErr != nil && !src.HasFeed():
+		return created + fromPage, pageErr
+	case pageErr != nil && feedErr != nil:
+		log.Ctx(ctx).Info().Err(pageErr).Msgf("blog %d page cannot be read either", src.ID)
+		return created + fromPage, feedErr
+	case pageErr != nil:
+		log.Ctx(ctx).Debug().Err(pageErr).Msgf("blog %d is read from its feed only", src.ID)
+	case feedErr != nil:
+		log.Ctx(ctx).Warn().Err(feedErr).Msgf("blog %d is read from its page only", src.ID)
+	}
+	return created + fromPage, nil
+}
+
+// fetchPage stores the new articles that the blog page lists. With fallbacks, a page that the rules find no article on
+// is rendered in the browser, and its links are judged by the agent: only the links it never judged.
+func (a *Articles) fetchPage(ctx context.Context, src domain.Source, origin domain.URL, fallbacks bool) (int, error) {
+	scan, err := a.feeds.ScanPage(ctx, src.SiteURL, fallbacks)
+	if err != nil {
+		return 0, fmt.Errorf("cannot read blog page %s: %w", src.SiteURL, err)
+	}
+	links := scan.Articles
+	if len(links) == 0 && fallbacks && len(scan.Unclear) > 0 {
+		links, err = a.judgeLinks(ctx, src, origin, scan.Unclear)
+		if err != nil {
+			log.Ctx(ctx).Warn().Err(err).Msgf("blog %d goes on with the links judged before", src.ID)
+		}
+	}
+	return a.storePageArticles(ctx, src.ID, origin, links), nil
+}
+
+// judgeLinks returns the links judged as articles, before or now. It asks the agent about the links it never judged
+// and that are not stored articles, in one job.
+func (a *Articles) judgeLinks(ctx context.Context, src domain.Source, origin domain.URL, links []domain.PageLink) ([]domain.PageLink, error) {
+	verdicts, err := a.verdicts.ListBySource(ctx, src.ID)
+	if err != nil {
+		return nil, fmt.Errorf("cannot list the judged links of blog %d: %w", src.ID, err)
+	}
+	var articles, fresh []domain.PageLink
+	for _, link := range links {
+		article, judged := verdicts[link.URL]
+		if judged {
+			if article {
+				articles = append(articles, link)
+			}
+			continue
+		}
+		known, err := a.repo.ExistsByURL(ctx, link.URL.WithOriginOf(origin))
+		if err != nil {
+			return articles, fmt.Errorf("cannot check link %s: %w", link.URL, err)
+		}
+		if !known {
+			fresh = append(fresh, link)
+		}
+	}
+	if len(fresh) == 0 {
+		return articles, nil
+	}
+
+	answered, backend, err := a.llm.ClassifyLinks(ctx, src.SiteURL, fresh)
+	if err != nil {
+		return articles, fmt.Errorf("cannot judge %d links of blog %d: %w", len(fresh), src.ID, err)
+	}
+	if err := a.verdicts.CreateIgnoringDuplicates(ctx, src.ID, answered, a.now()); err != nil {
+		log.Ctx(ctx).Warn().Err(err).Msgf("blog %d: its links are judged again next time", src.ID)
+	}
+	judged := len(articles)
+	for _, link := range fresh {
+		if answered[link.URL] {
+			articles = append(articles, link)
+		}
+	}
+	log.Ctx(ctx).Info().Msgf("blog %d: %s judged %d links, %d are articles", src.ID, backend, len(answered), len(articles)-judged)
+	return articles, nil
+}
+
+// storePageArticles reads a few new articles per fetch: a long first page fills up over the next fetches.
+// It stops after a few unreadable articles in a row: the site is likely down.
+func (a *Articles) storePageArticles(ctx context.Context, sourceID domain.SourceID, origin domain.URL, links []domain.PageLink) int {
+	created, reads, failures := 0, 0, 0
+	for _, link := range links {
+		if reads >= pageArticleReads || failures >= backfillFailures || ctx.Err() != nil {
+			break
+		}
+		pageURL := link.URL.WithOriginOf(origin)
+		known, err := a.repo.ExistsByURL(ctx, pageURL)
+		if err != nil {
+			log.Ctx(ctx).Warn().Err(err).Msgf("blog %d page articles stop at %s", sourceID, pageURL)
+			return created
+		}
+		if known {
+			continue
+		}
+		reads++
+		info, err := a.feeds.ReadArticle(ctx, pageURL)
+		if err != nil {
+			failures++
+			log.Ctx(ctx).Info().Err(err).Msgf("blog %d skips page article %s", sourceID, pageURL)
+			continue
+		}
+		failures = 0
+		title := cmp.Or(info.Title, link.Text)
+		if title == "" {
+			log.Ctx(ctx).Debug().Msgf("blog %d: %s has no title, skipped", sourceID, pageURL)
+			continue
+		}
+		isNew, err := a.store(ctx, sourceID, feed.Item{URL: pageURL, Title: title, Excerpt: info.Description, PublishedAt: info.PublishedAt})
+		if err != nil {
+			log.Ctx(ctx).Warn().Err(err).Msgf("blog %d page articles stop at %s", sourceID, pageURL)
+			return created
 		}
 		if isNew {
 			created++
 		}
 	}
-	return created, nil
+	return created
 }
 
 // backfill collects articles older than the feed holds. A backfill that collects nothing counts as a try.
@@ -257,7 +398,10 @@ func (a *Articles) backfill(ctx context.Context, src domain.Source) int {
 		origin = src.SiteURL
 	}
 	after := a.now().Add(-a.history)
-	fromFeed := a.backfillFeedPages(ctx, src, origin, after)
+	fromFeed := 0
+	if src.HasFeed() {
+		fromFeed = a.backfillFeedPages(ctx, src, origin, after)
+	}
 	fromSitemaps := a.backfillSitemaps(ctx, src, origin, after, backfillMax-fromFeed)
 	if ctx.Err() != nil {
 		return fromFeed + fromSitemaps

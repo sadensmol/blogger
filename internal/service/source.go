@@ -1,15 +1,22 @@
 package service
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/rs/zerolog/log"
 
 	"github.com/sadensmol/blogger/internal/domain"
 	"github.com/sadensmol/blogger/internal/feed"
 	"github.com/sadensmol/blogger/internal/repository"
 )
+
+// a blog without a feed must list at least this many articles on its page
+const minPageArticles = 3
 
 type Source struct {
 	repo  *repository.Source
@@ -21,22 +28,63 @@ func NewSource(repo *repository.Source, feeds *feed.Client, now func() time.Time
 	return &Source{repo: repo, feeds: feeds, now: now}
 }
 
+// Add takes rawURL as the blog page. A blog without a feed is added when its page lists at least three articles.
+// When rawURL is a feed, the feed's site link is the blog page.
 func (s *Source) Add(ctx context.Context, rawURL string) (domain.Source, error) {
 	pageURL, err := domain.ParseURL(rawURL)
 	if err != nil {
 		return domain.Source{}, fmt.Errorf("cannot add blog: %w", err)
 	}
 	info, err := s.feeds.Resolve(ctx, pageURL)
+	switch {
+	case err == nil:
+		if info.FeedURL == pageURL {
+			pageURL = info.SiteURL
+		}
+		return s.Create(ctx, domain.Source{
+			SiteURL: pageURL,
+			FeedURL: info.FeedURL,
+			Title:   info.Title,
+			Status:  domain.SourceActive,
+			Origin:  domain.OriginUser,
+		})
+	case !errors.Is(err, domain.ErrNotFound):
+		return domain.Source{}, fmt.Errorf("cannot add blog %s: %w", pageURL, err)
+	}
+
+	scan, err := s.feeds.ScanPage(ctx, pageURL, true)
 	if err != nil {
 		return domain.Source{}, fmt.Errorf("cannot add blog %s: %w", pageURL, err)
 	}
+	if len(scan.Articles) < minPageArticles {
+		return domain.Source{}, fmt.Errorf("cannot add blog %s: no feed, and its page lists %d articles: %w", pageURL, len(scan.Articles), domain.ErrNotFound)
+	}
 	return s.Create(ctx, domain.Source{
-		SiteURL: info.SiteURL,
-		FeedURL: info.FeedURL,
-		Title:   info.Title,
+		SiteURL: pageURL,
+		Title:   cmp.Or(scan.Title, string(pageURL)),
 		Status:  domain.SourceActive,
 		Origin:  domain.OriginUser,
 	})
+}
+
+// ReadableFeed returns the feed to keep for a blog: feedURL when it has items, else none when the blog page
+// lists at least three articles. It is ErrNotFound when the blog cannot be read either way.
+func (s *Source) ReadableFeed(ctx context.Context, pageURL, feedURL domain.URL) (domain.URL, error) {
+	if feedURL != "" {
+		items, err := s.feeds.Fetch(ctx, feedURL)
+		if err == nil && len(items) > 0 {
+			return feedURL, nil
+		}
+		log.Ctx(ctx).Info().Err(err).Msgf("blog %s: feed %s gives no items, its page is read instead", pageURL, feedURL)
+	}
+	scan, err := s.feeds.ScanPage(ctx, pageURL, true)
+	if err != nil {
+		return "", fmt.Errorf("cannot read blog %s: %w", pageURL, err)
+	}
+	if len(scan.Articles) < minPageArticles {
+		return "", fmt.Errorf("blog %s has no working feed, and its page lists %d articles: %w", pageURL, len(scan.Articles), domain.ErrNotFound)
+	}
+	return "", nil
 }
 
 func (s *Source) Create(ctx context.Context, src domain.Source) (domain.Source, error) {
@@ -118,10 +166,11 @@ func (s *Source) MarkBackfilled(ctx context.Context, id domain.SourceID) error {
 	return nil
 }
 
-func (s *Source) Known(ctx context.Context, feedURL domain.URL) (bool, error) {
-	known, err := s.repo.ExistsByFeedURL(ctx, feedURL)
+// Known reports a blog with this page or this feed, removed ones too.
+func (s *Source) Known(ctx context.Context, pageURL, feedURL domain.URL) (bool, error) {
+	known, err := s.repo.ExistsBySiteURLOrFeedURL(ctx, pageURL, feedURL)
 	if err != nil {
-		return false, fmt.Errorf("cannot check blog %s: %w", feedURL, err)
+		return false, fmt.Errorf("cannot check blog %s: %w", pageURL, err)
 	}
 	return known, nil
 }
@@ -138,38 +187,63 @@ func (s *Source) ApplyStatusRule(ctx context.Context, id domain.SourceID) (domai
 	return s.changeStatus(ctx, src, status)
 }
 
+// Diff matches an entry to a blog by its page, else by its feed: an entry can change the page of a blog.
+// An entry without a feed gets the feed found at its page when it matches no blog by page;
+// a blog without a feed is fine. An entry with only a feed keeps the page of its blog, or takes the feed url as its page.
 func (s *Source) Diff(ctx context.Context, wanted []domain.SourceSpec) (domain.SourcesDiff, error) {
 	current, err := s.List(ctx)
 	if err != nil {
 		return domain.SourcesDiff{}, err
 	}
-	currentByFeed := make(map[domain.URL]domain.Source, len(current))
+	byPage := make(map[domain.URL]domain.Source, len(current))
+	byFeed := make(map[domain.URL]domain.Source, len(current))
 	for _, src := range current {
-		currentByFeed[src.FeedURL] = src
+		byPage[src.SiteURL] = src
+		if src.HasFeed() {
+			byFeed[src.FeedURL] = src
+		}
 	}
 
 	var diff domain.SourcesDiff
-	kept := make(map[domain.URL]bool, len(wanted))
+	kept := make(map[domain.SourceID]bool, len(wanted))
+	added := make(map[domain.URL]bool, len(wanted))
 	for _, spec := range wanted {
-		fallbackTitle := string(spec.FeedURL)
-		if spec.FeedURL == "" {
+		var before domain.Source
+		exists := false
+		if spec.URL == "" {
+			before, exists = byFeed[spec.FeedURL]
+			spec.URL = cmp.Or(before.SiteURL, spec.FeedURL)
+		} else {
+			before, exists = byPage[spec.URL]
+		}
+		fallbackTitle := string(cmp.Or(spec.FeedURL, spec.URL))
+		if !exists && spec.FeedURL == "" {
 			info, err := s.feeds.Resolve(ctx, spec.URL)
-			if err != nil {
-				return domain.SourcesDiff{}, fmt.Errorf("cannot resolve feed of %s: %w", spec.URL, err)
+			switch {
+			case err == nil:
+				spec.FeedURL = info.FeedURL
+				fallbackTitle = info.Title
+			case !errors.Is(err, domain.ErrNotFound):
+				return domain.SourcesDiff{}, fmt.Errorf("cannot look for the feed of %s: %w", spec.URL, err)
 			}
-			spec.FeedURL = info.FeedURL
-			fallbackTitle = info.Title
 		}
-		if kept[spec.FeedURL] {
-			return domain.SourcesDiff{}, fmt.Errorf("cannot import: feed %s is listed more than once", spec.FeedURL)
+		if !exists && spec.FeedURL != "" {
+			before, exists = byFeed[spec.FeedURL]
 		}
-		kept[spec.FeedURL] = true
 
-		before, exists := currentByFeed[spec.FeedURL]
 		if !exists {
+			if added[spec.URL] {
+				return domain.SourcesDiff{}, fmt.Errorf("cannot import: blog %s is listed more than once", spec.URL)
+			}
+			added[spec.URL] = true
 			diff.Add = append(diff.Add, newSourceFromSpec(spec, fallbackTitle))
 			continue
 		}
+		if kept[before.ID] {
+			return domain.SourcesDiff{}, fmt.Errorf("cannot import: blog %s is listed more than once", before.SiteURL)
+		}
+		kept[before.ID] = true
+
 		after := before
 		if spec.Status != "" && spec.Status != before.Status {
 			after.Status = spec.Status
@@ -178,15 +252,16 @@ func (s *Source) Diff(ctx context.Context, wanted []domain.SourceSpec) (domain.S
 		if spec.Title != "" {
 			after.Title = spec.Title
 		}
-		if spec.URL != "" {
-			after.SiteURL = spec.URL
+		after.SiteURL = spec.URL
+		if spec.FeedURL != "" {
+			after.FeedURL = spec.FeedURL
 		}
 		if after != before {
 			diff.Change = append(diff.Change, domain.SourceChange{Before: before, After: after})
 		}
 	}
 	for _, src := range current {
-		if !kept[src.FeedURL] {
+		if !kept[src.ID] {
 			diff.Remove = append(diff.Remove, src)
 		}
 	}
@@ -207,7 +282,7 @@ func (s *Source) Apply(ctx context.Context, d domain.SourcesDiff) error {
 	}
 	for _, src := range d.Add {
 		if _, err := s.repo.Create(ctx, src, now); err != nil {
-			return fmt.Errorf("cannot apply addition of blog %s: %w", src.FeedURL, err)
+			return fmt.Errorf("cannot apply addition of blog %s: %w", src.SiteURL, err)
 		}
 	}
 	return nil
@@ -247,21 +322,11 @@ func (s *Source) changeStatus(ctx context.Context, src domain.Source, status dom
 }
 
 func newSourceFromSpec(spec domain.SourceSpec, fallbackTitle string) domain.Source {
-	src := domain.Source{
+	return domain.Source{
 		SiteURL: spec.URL,
 		FeedURL: spec.FeedURL,
-		Title:   spec.Title,
-		Status:  spec.Status,
+		Title:   cmp.Or(spec.Title, fallbackTitle),
+		Status:  cmp.Or(spec.Status, domain.SourceActive),
 		Origin:  domain.OriginUser,
 	}
-	if src.Status == "" {
-		src.Status = domain.SourceActive
-	}
-	if src.SiteURL == "" {
-		src.SiteURL = spec.FeedURL
-	}
-	if src.Title == "" {
-		src.Title = fallbackTitle
-	}
-	return src
 }

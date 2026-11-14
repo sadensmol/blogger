@@ -53,8 +53,12 @@ func (p *Poster) Pick(ctx context.Context, a domain.Article, pk domain.Pick) (st
 	if !strings.HasPrefix(string(a.URL), "http://") && !strings.HasPrefix(string(a.URL), "https://") {
 		return "", "", fmt.Errorf("cannot post pick %q: url scheme must be http or https", a.URL)
 	}
+	source := Escape(a.SourceTitle)
+	if strings.HasPrefix(string(a.SourceURL), "http://") || strings.HasPrefix(string(a.SourceURL), "https://") {
+		source = fmt.Sprintf("<%s|%s>", urlEscaper.Replace(string(a.SourceURL)), source)
+	}
 	text := fmt.Sprintf("*<%s|%s>*\n%s\n_%s · %s_",
-		urlEscaper.Replace(string(a.URL)), Escape(a.Title), Escape(pk.Description), Escape(a.SourceTitle), Escape(pk.Reason))
+		urlEscaper.Replace(string(a.URL)), Escape(a.Title), Escape(pk.Description), source, Escape(pk.Reason))
 
 	channel, ts, err := p.api.PostMessageContext(ctx, p.channelID,
 		slack.MsgOptionText(text, false),
