@@ -23,10 +23,13 @@ func (d DailyTime) slot(now time.Time) time.Time {
 	return time.Date(now.Year(), now.Month(), now.Day(), d.Hour, d.Minute, 0, 0, now.Location())
 }
 
-// MorningDue expects now in the digest zone.
+// MorningDue expects now in the digest zone. Before today's slot, the slot is yesterday's, so the window crosses midnight.
 func MorningDue(now time.Time, at DailyTime, last time.Time) bool {
 	slot := at.slot(now)
-	return !now.Before(slot) && now.Before(slot.Add(catchUpWindow)) && last.Before(slot)
+	if now.Before(slot) {
+		slot = at.slot(now.AddDate(0, 0, -1))
+	}
+	return now.Before(slot.Add(catchUpWindow)) && last.Before(slot)
 }
 
 func IntervalDue(now, last time.Time, every time.Duration) bool {

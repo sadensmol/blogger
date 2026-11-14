@@ -60,6 +60,14 @@ func (r *Run) LastStartedAt(ctx context.Context, kind domain.RunKind) (time.Time
 	return parseOptionalTime(startedAt)
 }
 
+func (r *Run) LastFinishedStartedAt(ctx context.Context, kind domain.RunKind) (time.Time, error) {
+	var startedAt sql.NullString
+	if err := r.db.QueryRowContext(ctx, `SELECT MAX(started_at) FROM run WHERE kind = ? AND finished_at IS NOT NULL`, kind).Scan(&startedAt); err != nil {
+		return time.Time{}, fmt.Errorf("cannot find last finished %s run: %w", kind, err)
+	}
+	return parseOptionalTime(startedAt)
+}
+
 func (r *Run) FailRunning(ctx context.Context, now time.Time) (int64, error) {
 	result, err := r.db.ExecContext(ctx, `
 UPDATE run SET status = ?, error = ?, finished_at = ?, updated_at = ?

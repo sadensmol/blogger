@@ -15,12 +15,16 @@ func NewRun(db *sql.DB) *Run {
 }
 
 func (r *Run) Insert(ctx context.Context, kind, status string, now time.Time) (int64, error) {
+	var finishedAt sql.NullString
+	if status != "running" {
+		finishedAt = sql.NullString{String: now.Format(time.RFC3339), Valid: true}
+	}
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
-INSERT INTO run (kind, status, started_at, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?)
+INSERT INTO run (kind, status, started_at, finished_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?)
 RETURNING id`,
-		kind, status, now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339)).Scan(&id)
+		kind, status, now.Format(time.RFC3339), finishedAt, now.Format(time.RFC3339), now.Format(time.RFC3339)).Scan(&id)
 	return id, err
 }
 

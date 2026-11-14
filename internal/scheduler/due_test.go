@@ -36,6 +36,32 @@ func TestMorningDue(t *testing.T) {
 	}
 }
 
+func TestMorningDueAcrossMidnight(t *testing.T) {
+	zone, err := time.LoadLocation("Asia/Tbilisi")
+	require.NoError(t, err)
+	at := scheduler.DailyTime{Hour: 20}
+	slot := time.Date(2026, 11, 14, 20, 0, 0, 0, zone)
+	nextDay := func(h, m int) time.Time { return time.Date(2026, 11, 15, h, m, 0, 0, zone) }
+
+	tests := []struct {
+		name string
+		now  time.Time
+		last time.Time
+		want bool
+	}{
+		{name: "after midnight with no run", now: nextDay(1, 0), want: true},
+		{name: "after midnight with the slot's run", now: nextDay(1, 0), last: slot, want: false},
+		{name: "after midnight with the day before's run", now: nextDay(1, 0), last: slot.AddDate(0, 0, -1), want: true},
+		{name: "last minute of the window", now: nextDay(1, 59), want: true},
+		{name: "after the window", now: nextDay(2, 0), want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, scheduler.MorningDue(tt.now, at, tt.last))
+		})
+	}
+}
+
 func TestClockSane(t *testing.T) {
 	require.False(t, scheduler.ClockSane(time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)))
 	require.True(t, scheduler.ClockSane(time.Date(2026, 11, 14, 0, 0, 0, 0, time.UTC)))

@@ -51,7 +51,7 @@ func (a *Articles) FetchAll(ctx context.Context) (int, error) {
 }
 
 func (a *Articles) FetchIfOlderThan(ctx context.Context, age time.Duration) error {
-	last, err := a.runs.LastStarted(ctx, domain.RunKindFetch)
+	last, err := a.runs.LastFinishedStarted(ctx, domain.RunKindFetch)
 	if err != nil {
 		return err
 	}

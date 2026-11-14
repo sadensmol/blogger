@@ -47,9 +47,9 @@ func (s *Scheduler) Tick(ctx context.Context) {
 	s.clockWarned = false
 	local := now.In(s.d.Location)
 
+	s.fetch(ctx, now)
 	s.submitMorning(ctx, local)
 	s.submitDiscovery(ctx, local)
-	s.fetch(ctx, now)
 }
 
 func (s *Scheduler) Run(ctx context.Context) {

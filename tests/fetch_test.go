@@ -128,6 +128,17 @@ func (s *FetchTestSuite) TestFetchIfOlderThanSkipsFreshFetch() {
 	s.Equal(0, s.feeds.Requests(feedAPath))
 }
 
+func (s *FetchTestSuite) TestFetchIfOlderThanIgnoresUnfinishedFetch() {
+	s.setFeed(feedAPath, s.feeds.URL()+"/one")
+	s.insertSource(feedAPath, domain.SourceActive)
+	_, err := s.runs.Insert(s.Ctx, string(domain.RunKindFetch), string(domain.RunStatusRunning), s.Clock.Now().Add(-time.Minute))
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.articles.FetchIfOlderThan(s.Ctx, time.Hour))
+
+	s.Equal(1, s.feeds.Requests(feedAPath))
+}
+
 func (s *FetchTestSuite) TestTrackingParamsStoredOnce() {
 	s.setFeed(feedAPath, s.feeds.URL()+"/a?utm_source=x", s.feeds.URL()+"/a")
 	s.insertSource(feedAPath, domain.SourceActive)

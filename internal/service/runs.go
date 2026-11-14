@@ -56,6 +56,14 @@ func (r *Runs) LastStarted(ctx context.Context, kind domain.RunKind) (time.Time,
 	return startedAt, nil
 }
 
+func (r *Runs) LastFinishedStarted(ctx context.Context, kind domain.RunKind) (time.Time, error) {
+	startedAt, err := r.repo.LastFinishedStartedAt(ctx, kind)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("cannot read last finished run: %w", err)
+	}
+	return startedAt, nil
+}
+
 func (r *Runs) FailInterrupted(ctx context.Context) (int64, error) {
 	n, err := r.repo.FailRunning(ctx, r.now())
 	if err != nil {
