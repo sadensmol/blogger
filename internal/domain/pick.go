@@ -67,6 +67,6 @@ type VotedArticle struct {
 }
 
 type BlogProposal struct {
-	SiteURL, FeedURL URL
-	Title, Reason    string
+	SiteURL, FeedURL     URL
+	Title, About, Reason string
 }

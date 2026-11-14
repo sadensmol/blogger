@@ -15,6 +15,7 @@ const (
 	JobMorningDigest JobKind = "digest-morning"
 	JobShowDigest    JobKind = "digest-show"
 	JobDiscovery     JobKind = "discovery"
+	JobSuggest       JobKind = "suggest"
 )
 
 type Job struct {
@@ -33,12 +34,14 @@ const (
 type JobsData struct {
 	Digest    *Digest
 	Discovery *Discovery
+	Suggest   *Suggest
 	Size      int
 }
 
 type Jobs struct {
 	digest    *Digest
 	discovery *Discovery
+	suggest   *Suggest
 	queue     chan Job
 
 	mu      sync.Mutex
@@ -49,6 +52,7 @@ func NewJobs(d JobsData) *Jobs {
 	return &Jobs{
 		digest:    d.Digest,
 		discovery: d.Discovery,
+		suggest:   d.Suggest,
 		queue:     make(chan Job, d.Size),
 		waiting:   map[JobKind]struct{}{},
 	}
@@ -106,6 +110,8 @@ func (j *Jobs) execute(ctx context.Context, job Job) {
 		err = j.digest.Show(jobCtx, job.ReplyURL)
 	case JobDiscovery:
 		_, err = j.discovery.Run(jobCtx)
+	case JobSuggest:
+		err = j.suggest.Run(jobCtx, job.ReplyURL)
 	}
 	if err != nil {
 		log.Ctx(jobCtx).Error().Err(err).Msgf("job %s failed", job.Kind)

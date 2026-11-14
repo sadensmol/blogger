@@ -24,14 +24,21 @@ Use two Slack apps. Two Socket Mode connections of one app split the events. The
 9. Copy `deploy/dev.env.example` to `~/.config/blogger/dev.env`. Run `chmod 600 ~/.config/blogger/dev.env`. Fill in the values.
 10. Check the key names only: `cut -d= -f1 ~/.config/blogger/dev.env | sort`.
 11. Run `make run-local`. The bot starts on the Mac. It stores data in `.scratch/dev-data`. It uses the `claude` and `codex` programs from your PATH and your own logins. `CLAUDE_CODE_OAUTH_TOKEN` is optional.
-12. In `#news-dev`, try `/show`. Try `/blogs add <url>`. React with 👍 and 👎 to a post.
+12. In `#news-dev`, try `/show`. Try `/blogs add <url>`. Try `/discover` and click **+ Add** on one blog. React with 👍 and 👎 to a post.
 13. To debug, run `make debug-local`. It starts the bot under Delve. If `dlv` is missing, the command prints how to install it.
 
 `make run-local` fails with a clear message when `~/.config/blogger/dev.env` is missing. Set `DEV_ENV=<path>` to use another file.
 
+**Update an app from the manifest.** A new release can change a manifest, for example to add a command or to turn on interactivity. Do this for each app whose manifest changed (`deploy/slack-manifest-dev.yaml` for the dev app, `deploy/slack-manifest.yaml` for the board app):
+
+1. Open https://api.slack.com/apps and choose the app.
+2. Open **App Manifest**. Replace the content with the content of the manifest file. Save.
+3. If Slack asks you to reinstall the app, reinstall it.
+
 ## 3. Managing blogs and notes
 
 - **In Slack.** Use `/blogs list`, `/blogs add <url>`, `/blogs remove <id|url>`, `/blogs pause <id|url>` and `/blogs resume <id|url>`.
+- **Suggestions.** Use `/discover`. The bot searches the web for blogs like the ones you vote up. It posts up to 10 blogs with a working feed, each with a short description, a link and a **+ Add** button. Click **+ Add** to add the blog as active. Only your clicks count.
 - **In Claude Code.** The skill `manage-blogs` (`.claude/skills/manage-blogs/SKILL.md`) lists, adds, removes, pauses and resumes blogs. It also shows and changes the interest notes. It works on the board and in local test mode.
 - The bot never changes `## My notes`. Change the notes only through Claude Code on the Mac.
 

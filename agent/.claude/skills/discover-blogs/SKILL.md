@@ -17,10 +17,11 @@ description: Search the web for new blogs the user may like, based on how they v
    - `site_url`: the blog's home page.
    - `feed_url`: the RSS or Atom feed URL.
    - `title`: the blog's name.
+   - `about`: one or two plain sentences on what the blog writes about. No markup, no links.
    - `reason`: one short sentence that says why it fits the user.
 
 Answer with the JSON object only:
 
 ```json
-{"blogs": [{"site_url": "...", "feed_url": "...", "title": "...", "reason": "..."}]}
+{"blogs": [{"site_url": "...", "feed_url": "...", "title": "...", "about": "...", "reason": "..."}]}
 ```

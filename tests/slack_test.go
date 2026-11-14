@@ -2,8 +2,11 @@ package tests_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 	controllerslack "github.com/sadensmol/blogger/internal/controller/slack"
 	"github.com/sadensmol/blogger/internal/domain"
 	"github.com/sadensmol/blogger/internal/llm"
+	"github.com/sadensmol/blogger/internal/slackpost"
 	"github.com/sadensmol/blogger/internal/usecase"
 	"github.com/sadensmol/blogger/tests"
 	testsrepository "github.com/sadensmol/blogger/tests/repository"
@@ -30,6 +34,11 @@ const (
 	slackShowHeader = "On request: 1 pick"
 	slackPicking    = "Picking articles…"
 	slackOwnerOnly  = "Only the owner can use this bot."
+	slackLooking    = "Looking for blogs…"
+	slackOtherUser  = "UOTHER"
+	slackBlogTitle  = "Tom & <Jerry>"
+	slackAbout      = "Writes about Go & <SQL>."
+	slackAdded      = "Added ✓"
 )
 
 type SlackTestSuite struct {
@@ -43,6 +52,7 @@ type SlackTestSuite struct {
 	runs      *testsrepository.Run
 	posts     *testsrepository.Post
 	reactions *testsrepository.Reaction
+	proposals *testsrepository.Proposal
 	handler   *controllerslack.Handler
 
 	stopWorker func()
@@ -63,6 +73,7 @@ func (s *SlackTestSuite) SetupTest() {
 	s.runs = testsrepository.NewRun(s.DB)
 	s.posts = testsrepository.NewPost(s.DB)
 	s.reactions = testsrepository.NewReaction(s.DB)
+	s.proposals = testsrepository.NewProposal(s.DB)
 
 	s.Require().NoError(testsrepository.NewProfileVersion(s.DB).Insert(s.Ctx, string(domain.ProfileInit), s.Clock.Now().Add(-2*time.Hour)))
 	s.agents.Answer(llm.Claude, llm.SkillPickArticles, map[string]any{"picks": []map[string]any{{
@@ -93,21 +104,26 @@ func (s *SlackTestSuite) articleURL() string {
 	return fmt.Sprintf("%s/%s", s.feeds.URL(), slackArticle)
 }
 
-func (s *SlackTestSuite) newHandlerAndJobs() (*controllerslack.Handler, *usecase.Jobs) {
-	app := tests.NewApp(s.T(), tests.AppData{
+func (s *SlackTestSuite) newApp(backend llm.Backend) *tests.App {
+	return tests.NewApp(s.T(), tests.AppData{
 		DB:          s.DB,
 		Now:         s.Clock.Now,
 		Agents:      s.agents,
-		Backends:    []llm.Backend{llm.Claude},
+		Backends:    []llm.Backend{backend},
 		SlackURL:    s.slack.URL,
 		ChannelID:   digestChannelID,
 		ProfilePath: writeLearnedProfile(s.T()),
 		Location:    time.UTC,
 		DigestSize:  digestSize,
 	})
+}
+
+func (s *SlackTestSuite) newHandlerAndJobs() (*controllerslack.Handler, *usecase.Jobs) {
+	app := s.newApp(llm.Claude)
 	jobs := usecase.NewJobs(app.JobsData(3))
 	handler := controllerslack.NewHandler(controllerslack.HandlerData{
 		Jobs:       jobs,
+		Suggest:    app.Suggest,
 		Sources:    app.Sources,
 		Votes:      app.Votes,
 		Poster:     app.Poster,
@@ -174,6 +190,64 @@ func (s *SlackTestSuite) runsOf(kind domain.RunKind) int {
 	var n int
 	s.Require().NoError(s.DB.QueryRowContext(s.Ctx, "SELECT COUNT(*) FROM run WHERE kind = ?", string(kind)).Scan(&n))
 	return n
+}
+
+func (s *SlackTestSuite) feedURL(path string) string {
+	return fmt.Sprintf("%s%s", s.feeds.URL(), path)
+}
+
+func (s *SlackTestSuite) siteURL(path string) string {
+	return fmt.Sprintf("%s%s", s.feeds.URL(), strings.TrimSuffix(path, ".xml"))
+}
+
+func (s *SlackTestSuite) setGoodFeed(path string) {
+	s.feeds.Set(path, rssType, fmt.Sprintf(itemsFmt, fmt.Sprintf(itemFmt, "Post", s.feedURL("/post"))))
+}
+
+func (s *SlackTestSuite) answerBlogs(paths ...string) {
+	blogs := make([]map[string]any, 0, len(paths))
+	for _, path := range paths {
+		blogs = append(blogs, map[string]any{
+			"site_url": s.siteURL(path), "feed_url": s.feedURL(path), "title": slackBlogTitle, "about": slackAbout, "reason": goodReason,
+		})
+	}
+	s.agents.Answer(llm.Claude, llm.SkillDiscoverBlogs, map[string]any{"blogs": blogs})
+}
+
+func (s *SlackTestSuite) discover() {
+	s.Equal(slackLooking, s.ack(s.ownerCommand("/discover", "")))
+	s.Eventually(func() bool { return s.runsOf(domain.RunKindSuggest) == 1 && len(s.slack.Posted()) == 1 }, slackWait, slackPoll)
+}
+
+func (s *SlackTestSuite) listProposals() []testsrepository.ProposalRow {
+	proposals, err := s.proposals.List(s.Ctx)
+	s.Require().NoError(err)
+	return proposals
+}
+
+func (s *SlackTestSuite) sections(rawBlocks string) []*slack.SectionBlock {
+	var blocks slack.Blocks
+	s.Require().NoError(json.Unmarshal([]byte(rawBlocks), &blocks))
+	s.Require().NotEmpty(blocks.BlockSet)
+	s.Equal(slack.MBTHeader, blocks.BlockSet[0].BlockType())
+	var sections []*slack.SectionBlock
+	for _, block := range blocks.BlockSet[1:] {
+		section, ok := block.(*slack.SectionBlock)
+		s.Require().True(ok)
+		sections = append(sections, section)
+	}
+	return sections
+}
+
+func (s *SlackTestSuite) click(userID string, proposalID int64) {
+	var cb slack.InteractionCallback
+	payload := fmt.Sprintf(`{"type":"block_actions","user":{"id":%q},"channel":{"id":%q},"response_url":%q,`+
+		`"actions":[{"type":"button","block_id":"b1","action_id":%q,"value":"%d"}]}`,
+		userID, digestChannelID, fmt.Sprintf("%s/response/click", s.slack.URL), slackpost.AddBlogAction, proposalID)
+	s.Require().NoError(json.Unmarshal([]byte(payload), &cb))
+
+	s.handler.BlockActions(s.Ctx, cb)
+	s.handler.Wait()
 }
 
 func (s *SlackTestSuite) TestShowAcksFastAndPostsLater() {
@@ -375,4 +449,112 @@ func (s *SlackTestSuite) TestServeWithBadDigestTimeFails() {
 	err := app.Serve(s.Ctx, config.Serve{LogLevel: "info", TimeZone: "UTC", DigestTime: "25:61"}, "dev")
 
 	s.ErrorContains(err, "BLOGGER_DIGEST_TIME")
+}
+
+func (s *SlackTestSuite) TestDiscoverPostsNewBlogsWithAddButtons() {
+	s.insertBlogWithArticle()
+	first, second := fmt.Sprintf(goodFeedFmt, 1), fmt.Sprintf(goodFeedFmt, 2)
+	s.setGoodFeed(first)
+	s.setGoodFeed(second)
+	s.feeds.Set(emptyFeedPath, rssType, fmt.Sprintf(itemsFmt, ""))
+	s.answerBlogs(first, slackFeedPath, deadFeedPath, emptyFeedPath, second, first)
+
+	s.discover()
+
+	proposals := s.listProposals()
+	s.Require().Len(proposals, 2)
+	sections := s.sections(s.slack.PostedBlocks()[0])
+	s.Require().Len(sections, 2)
+	for i, path := range []string{first, second} {
+		s.Equal(s.feedURL(path), proposals[i].FeedURL)
+		s.Equal(string(domain.ProposalProposed), proposals[i].Status)
+		s.NotEmpty(proposals[i].MessageTS)
+		s.Equal(fmt.Sprintf("*<%s|Tom &amp; &lt;Jerry&gt;>*\nWrites about Go &amp; &lt;SQL&gt;.", s.siteURL(path)), sections[i].Text.Text)
+		s.Require().NotNil(sections[i].Accessory)
+		s.Require().NotNil(sections[i].Accessory.ButtonElement)
+		s.Equal(slackpost.AddBlogAction, sections[i].Accessory.ButtonElement.ActionID)
+		s.Equal(strconv.FormatInt(proposals[i].ID, 10), sections[i].Accessory.ButtonElement.Value)
+	}
+}
+
+func (s *SlackTestSuite) TestDiscoverWithoutNewBlogsSaysSo() {
+	s.insertBlogWithArticle()
+	s.answerBlogs(slackFeedPath, deadFeedPath)
+
+	s.discover()
+
+	s.Equal([]string{"Found no new blogs with a working feed. Try again later."}, s.slack.Posted())
+	s.Empty(s.listProposals())
+}
+
+func (s *SlackTestSuite) TestOwnerAddClickAddsBlogAndMarksIt() {
+	s.insertBlogWithArticle()
+	first, second := fmt.Sprintf(goodFeedFmt, 1), fmt.Sprintf(goodFeedFmt, 2)
+	s.setGoodFeed(first)
+	s.setGoodFeed(second)
+	s.answerBlogs(first, second)
+	s.discover()
+
+	s.click(slackOwnerID, s.listProposals()[0].ID)
+
+	detail, err := s.sources.Detail(s.Ctx, s.feedURL(first))
+	s.Require().NoError(err)
+	s.Equal(testsrepository.SourceDetail{Status: string(domain.SourceActive), Origin: string(domain.OriginUser)}, detail)
+	proposals := s.listProposals()
+	s.Equal(string(domain.ProposalAdded), proposals[0].Status)
+	s.Equal(string(domain.ProposalProposed), proposals[1].Status)
+	updates := s.slack.Updates()
+	s.Require().Len(updates, 1)
+	s.Equal(proposals[0].MessageTS, updates[0].TS)
+	sections := s.sections(updates[0].Blocks)
+	s.Require().Len(sections, 2)
+	s.Nil(sections[0].Accessory)
+	s.Contains(sections[0].Text.Text, slackAdded)
+	s.Require().NotNil(sections[1].Accessory)
+	s.NotContains(sections[1].Text.Text, slackAdded)
+	s.Empty(s.slack.Replies())
+}
+
+func (s *SlackTestSuite) TestSecondAddClickAddsNoDuplicate() {
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+	s.discover()
+	proposalID := s.listProposals()[0].ID
+	s.click(slackOwnerID, proposalID)
+
+	s.click(slackOwnerID, proposalID)
+
+	s.Equal(2, s.CountRows("source"))
+	s.Require().Len(s.slack.Replies(), 1)
+	s.Contains(s.slack.Replies()[0], "Already in the list.")
+}
+
+func (s *SlackTestSuite) TestAddClickOfAnotherUserIsIgnored() {
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+	s.discover()
+
+	s.click(slackOtherUser, s.listProposals()[0].ID)
+
+	s.Equal(1, s.CountRows("source"))
+	s.Equal(string(domain.ProposalProposed), s.listProposals()[0].Status)
+	s.Empty(s.slack.Updates())
+	s.Empty(s.slack.Replies())
+}
+
+func (s *SlackTestSuite) TestDiscoverNeverUsesCodexOSS() {
+	s.insertBlogWithArticle()
+	s.agents.Answer(llm.CodexOSS, llm.SkillDiscoverBlogs, map[string]any{"blogs": []map[string]any{}})
+
+	err := s.newApp(llm.CodexOSS).Suggest.Run(s.Ctx, fmt.Sprintf("%s/response/r1", s.slack.URL))
+
+	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
+	s.Empty(s.agents.Args(llm.CodexOSS))
+	s.Empty(s.slack.Posted())
+	s.Require().Len(s.slack.Replies(), 1)
+	s.Contains(s.slack.Replies()[0], "no agent with web search answered")
 }

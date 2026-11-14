@@ -45,6 +45,7 @@ type App struct {
 	Poster    *slackpost.Poster
 	Digest    *usecase.Digest
 	Discovery *usecase.Discovery
+	Suggest   *usecase.Suggest
 }
 
 func NewApp(t *testing.T, d AppData) *App {
@@ -109,9 +110,17 @@ func NewApp(t *testing.T, d AppData) *App {
 			Runs:    runs,
 			LLM:     runner,
 		}),
+		Suggest: usecase.NewSuggest(usecase.SuggestData{
+			Sources:   sources,
+			Proposals: service.NewProposals(repository.NewProposal(d.DB), d.Now),
+			Feeds:     feeds,
+			Runs:      runs,
+			LLM:       runner,
+			Poster:    poster,
+		}),
 	}
 }
 
 func (a *App) JobsData(size int) usecase.JobsData {
-	return usecase.JobsData{Digest: a.Digest, Discovery: a.Discovery, Size: size}
+	return usecase.JobsData{Digest: a.Digest, Discovery: a.Discovery, Suggest: a.Suggest, Size: size}
 }

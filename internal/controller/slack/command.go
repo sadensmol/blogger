@@ -18,11 +18,13 @@ import (
 )
 
 const (
-	ownerOnlyText = "Only the owner can use this bot."
-	pickingText   = "Picking articles…"
-	onItsWayText  = "A digest is already on its way."
-	busyText      = "Busy right now, try again in a few minutes."
-	addTimeout    = time.Minute
+	ownerOnlyText      = "Only the owner can use this bot."
+	pickingText        = "Picking articles…"
+	onItsWayText       = "A digest is already on its way."
+	lookingText        = "Looking for blogs…"
+	alreadyLookingText = "Already looking for blogs."
+	busyText           = "Busy right now, try again in a few minutes."
+	addTimeout         = time.Minute
 )
 
 type BlogsCommand struct{ Action, Arg string }
@@ -56,27 +58,30 @@ func ParseBlogsCommand(text string) (BlogsCommand, error) {
 
 type HandlerData struct {
 	Jobs               *usecase.Jobs
+	Suggest            *usecase.Suggest
 	Sources            *service.Source
 	Votes              *service.Votes
 	Poster             *slackpost.Poster
 	ChannelID, OwnerID string
-	Background         context.Context // the serve context, for /blogs add after the ack
+	Background         context.Context // the serve context, for the work that answers after the ack
 }
 
 type Handler struct {
 	jobs       *usecase.Jobs
+	suggest    *usecase.Suggest
 	sources    *service.Source
 	votes      *service.Votes
 	poster     *slackpost.Poster
 	channelID  string
 	ownerID    string
 	background context.Context
-	adds       sync.WaitGroup
+	pending    sync.WaitGroup
 }
 
 func NewHandler(d HandlerData) *Handler {
 	return &Handler{
 		jobs:       d.Jobs,
+		suggest:    d.Suggest,
 		sources:    d.Sources,
 		votes:      d.Votes,
 		poster:     d.Poster,
@@ -101,6 +106,8 @@ func (h *Handler) answer(ctx context.Context, cmd slack.SlashCommand) string {
 		return h.show(ctx, cmd)
 	case "/blogs":
 		return h.blogs(ctx, cmd)
+	case "/discover":
+		return h.discover(ctx, cmd)
 	default:
 		log.Ctx(ctx).Warn().Msgf("unknown slash command %s", cmd.Command)
 		return fmt.Sprintf("Unknown command %s.", slackpost.Escape(cmd.Command))
@@ -118,6 +125,23 @@ func (h *Handler) show(ctx context.Context, cmd slack.SlashCommand) string {
 		return pickingText
 	case usecase.AlreadyQueued:
 		return onItsWayText
+	case usecase.Busy:
+		return busyText
+	}
+	return controllertext.Failed
+}
+
+func (h *Handler) discover(ctx context.Context, cmd slack.SlashCommand) string {
+	if cmd.ChannelID != h.channelID {
+		return fmt.Sprintf("Use /discover in <#%s>.", h.channelID)
+	}
+	result := h.jobs.Submit(usecase.Job{Kind: usecase.JobSuggest, ReplyURL: cmd.ResponseURL})
+	log.Ctx(ctx).Info().Msgf("/discover from %s in %s: %s", cmd.UserID, cmd.ChannelID, result)
+	switch result {
+	case usecase.Queued:
+		return lookingText
+	case usecase.AlreadyQueued:
+		return alreadyLookingText
 	case usecase.Busy:
 		return busyText
 	}
@@ -185,13 +209,13 @@ func (h *Handler) changeBlog(ctx context.Context, c BlogsCommand) string {
 	return slackpost.Escape(answer(src))
 }
 
-// Wait returns when every /blogs add started so far has answered.
+// Wait returns when every /blogs add and add button click started so far has answered.
 func (h *Handler) Wait() {
-	h.adds.Wait()
+	h.pending.Wait()
 }
 
 func (h *Handler) addBlogLater(responseURL, rawURL string) {
-	h.adds.Go(func() {
+	h.pending.Go(func() {
 		ctx, cancel := context.WithTimeout(h.background, addTimeout)
 		defer cancel()
 

@@ -12,6 +12,7 @@ const (
 	RunKindProfileInit   RunKind = "profile-init"
 	RunKindProfileUpdate RunKind = "profile-update"
 	RunKindDiscovery     RunKind = "discovery"
+	RunKindSuggest       RunKind = "suggest"
 )
 
 type RunStatus string

@@ -64,6 +64,18 @@ func dispatch(ctx context.Context, client *socketmode.Client, h *Handler, evt so
 		if err != nil {
 			log.Ctx(ctx).Error().Err(err).Msgf("cannot record slack %s", apiEvent.InnerEvent.Type)
 		}
+	case socketmode.EventTypeInteractive:
+		cb, ok := evt.Data.(slack.InteractionCallback)
+		if !ok || evt.Request == nil {
+			log.Ctx(ctx).Warn().Msgf("unexpected interaction data %T", evt.Data)
+			return
+		}
+		if err := client.AckCtx(ctx, evt.Request.EnvelopeID, nil); err != nil {
+			log.Ctx(ctx).Error().Err(err).Msgf("cannot ack slack interaction %s", evt.Request.EnvelopeID)
+		}
+		if cb.Type == slack.InteractionTypeBlockActions {
+			h.BlockActions(ctx, cb)
+		}
 	case socketmode.EventTypeSlashCommand:
 		cmd, ok := evt.Data.(slack.SlashCommand)
 		if !ok || evt.Request == nil {

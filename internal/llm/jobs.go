@@ -247,6 +247,7 @@ type blogJSON struct {
 	SiteURL string `json:"site_url"`
 	FeedURL string `json:"feed_url"`
 	Title   string `json:"title"`
+	About   string `json:"about"`
 	Reason  string `json:"reason"`
 }
 
@@ -259,7 +260,7 @@ func (b blogJSON) toDomain() (domain.BlogProposal, error) {
 	if err != nil {
 		return domain.BlogProposal{}, fmt.Errorf("bad feed url: %w", err)
 	}
-	return domain.BlogProposal{SiteURL: siteURL, FeedURL: feedURL, Title: b.Title, Reason: b.Reason}, nil
+	return domain.BlogProposal{SiteURL: siteURL, FeedURL: feedURL, Title: b.Title, About: b.About, Reason: b.Reason}, nil
 }
 
 func (r *Runner) DiscoverBlogs(ctx context.Context, sources []domain.Source, max int) ([]domain.BlogProposal, Backend, error) {

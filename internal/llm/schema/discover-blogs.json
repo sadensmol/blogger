@@ -8,11 +8,12 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["site_url", "feed_url", "title", "reason"],
+        "required": ["site_url", "feed_url", "title", "about", "reason"],
         "properties": {
           "site_url": {"type": "string"},
           "feed_url": {"type": "string"},
           "title": {"type": "string"},
+          "about": {"type": "string"},
           "reason": {"type": "string"}
         }
       }

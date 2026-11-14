@@ -29,13 +29,19 @@ type FakeSlack struct {
 	BlockMethod string
 	OnBlock     func()
 
-	server    *httptest.Server
-	mu        sync.Mutex
-	posted    []string
-	reactions []string
-	replies   []string
-	counter   int
-	postCalls int
+	server       *httptest.Server
+	mu           sync.Mutex
+	posted       []string
+	postedBlocks []string
+	updates      []SlackUpdate
+	reactions    []string
+	replies      []string
+	counter      int
+	postCalls    int
+}
+
+type SlackUpdate struct {
+	Channel, TS, Blocks string
 }
 
 func NewFakeSlack() *FakeSlack {
@@ -96,6 +102,7 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.counter++
 		f.posted = append(f.posted, r.PostForm.Get("text"))
+		f.postedBlocks = append(f.postedBlocks, r.PostForm.Get("blocks"))
 		if fault == PostDropped {
 			conn, _, err := w.(http.Hijacker).Hijack()
 			if err != nil {
@@ -106,6 +113,9 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		fmt.Fprintf(w, `{"ok":true,"channel":"C1","ts":"%d.000100"}`, f.counter)
+	case "chat.update":
+		f.updates = append(f.updates, SlackUpdate{Channel: r.PostForm.Get("channel"), TS: r.PostForm.Get("ts"), Blocks: r.PostForm.Get("blocks")})
+		fmt.Fprintf(w, `{"ok":true,"channel":%q,"ts":%q}`, r.PostForm.Get("channel"), r.PostForm.Get("ts"))
 	case "reactions.add":
 		f.reactions = append(f.reactions, fmt.Sprintf("%s:%s", r.PostForm.Get("timestamp"), r.PostForm.Get("name")))
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -120,6 +130,19 @@ func (f *FakeSlack) Posted() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.posted...)
+}
+
+// PostedBlocks holds the blocks json of each posted message, empty for a text-only one, in the order of Posted.
+func (f *FakeSlack) PostedBlocks() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.postedBlocks...)
+}
+
+func (f *FakeSlack) Updates() []SlackUpdate {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]SlackUpdate(nil), f.updates...)
 }
 
 func (f *FakeSlack) Reactions() []string {

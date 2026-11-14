@@ -161,6 +161,14 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	slackHTTP := &http.Client{Timeout: slackTimeout}
 	api := slack.New(cfg.SlackBotToken, slack.OptionAppLevelToken(cfg.SlackAppToken), slack.OptionHTTPClient(slackHTTP))
 	poster := slackpost.NewPoster(api, slackHTTP, cfg.SlackChannelID)
+	suggest := usecase.NewSuggest(usecase.SuggestData{
+		Sources:   sources,
+		Proposals: service.NewProposals(repository.NewProposal(db), time.Now),
+		Feeds:     feeds,
+		Runs:      runs,
+		LLM:       runner,
+		Poster:    poster,
+	})
 	jobs := usecase.NewJobs(usecase.JobsData{
 		Digest: usecase.NewDigest(usecase.DigestData{
 			Articles: articles,
@@ -181,7 +189,8 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 			Runs:    runs,
 			LLM:     runner,
 		}),
-		Size: jobQueueSize,
+		Suggest: suggest,
+		Size:    jobQueueSize,
 	})
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -208,6 +217,7 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 
 	handler := controllerslack.NewHandler(controllerslack.HandlerData{
 		Jobs:       jobs,
+		Suggest:    suggest,
 		Sources:    sources,
 		Votes:      votes,
 		Poster:     poster,

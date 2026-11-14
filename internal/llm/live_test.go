@@ -142,6 +142,9 @@ func TestLiveDiscoverBlogs(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, backend, used)
 			require.NotEmpty(t, proposals)
+			for _, p := range proposals {
+				require.NotEmpty(t, p.About)
+			}
 			t.Logf("proposals: %+v", proposals)
 		})
 	}
