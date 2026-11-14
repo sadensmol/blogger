@@ -1,0 +1,37 @@
+package testsrepository
+
+import (
+	"context"
+	"database/sql"
+	"time"
+)
+
+type Source struct {
+	db *sql.DB
+}
+
+func NewSource(db *sql.DB) *Source {
+	return &Source{db: db}
+}
+
+type SourceRow struct {
+	FeedURL string
+	Status  string
+}
+
+func (r *Source) Insert(ctx context.Context, row SourceRow, now time.Time) (int64, error) {
+	var id int64
+	err := r.db.QueryRowContext(ctx, `
+INSERT INTO source (site_url, feed_url, title, status, origin, status_changed_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, 'user', ?, ?, ?)
+RETURNING id`,
+		row.FeedURL+"/site", row.FeedURL, row.FeedURL, row.Status,
+		now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339)).Scan(&id)
+	return id, err
+}
+
+func (r *Source) DeletedAt(ctx context.Context, id int64) (sql.NullString, error) {
+	var deletedAt sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT deleted_at FROM source WHERE id = ?`, id).Scan(&deletedAt)
+	return deletedAt, err
+}
