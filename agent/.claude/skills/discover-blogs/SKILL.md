@@ -1,0 +1,26 @@
+---
+name: discover-blogs
+description: Search the web for new blogs the user may like, based on how they voted on the blogs they follow. Use when a job asks for discover-blogs with an input JSON file.
+---
+
+# Discover new blogs
+
+1. Read the input file. Its path is in the prompt. It is JSON:
+   - `max`: the most blogs you may propose.
+   - `sources`: the blogs the user already has. Each has `title`, `site_url`, `feed_url`, `status`, `up` and `down` (vote counts).
+2. Find what the user likes: blogs with more `up` than `down` votes are well voted. Blogs with more `down` votes are disliked.
+3. Search the web for blogs like the well-voted ones and unlike the down-voted ones. Prefer active personal or engineering blogs with real articles.
+4. Propose up to `max` blogs.
+5. Give a working RSS or Atom feed URL for each blog. Fetch the feed URL to check that it answers with a feed. Drop the blog when you cannot find a working feed.
+6. Never propose a blog that is in `sources`, in any status. Compare by site and by feed URL.
+7. For each blog, write:
+   - `site_url`: the blog's home page.
+   - `feed_url`: the RSS or Atom feed URL.
+   - `title`: the blog's name.
+   - `reason`: one short sentence that says why it fits the user.
+
+Answer with the JSON object only:
+
+```json
+{"blogs": [{"site_url": "...", "feed_url": "...", "title": "...", "reason": "..."}]}
+```
