@@ -41,3 +41,9 @@ func (r *Run) LatestByKind(ctx context.Context, kind string) (RunResult, error) 
 		Scan(&result.Status, &result.Backend)
 	return result, err
 }
+
+func (r *Run) LatestID(ctx context.Context, kind string) (int64, error) {
+	var id int64
+	err := r.db.QueryRowContext(ctx, `SELECT id FROM run WHERE kind = ? ORDER BY id DESC LIMIT 1`, kind).Scan(&id)
+	return id, err
+}
