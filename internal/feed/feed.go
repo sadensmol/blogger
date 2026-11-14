@@ -5,10 +5,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/mmcdole/gofeed"
@@ -20,6 +22,7 @@ import (
 
 const (
 	userAgent      = "blogger"
+	maxRedirects   = 5
 	maxBodyBytes   = 5 << 20
 	maxExcerptRune = 500
 )
@@ -48,11 +51,75 @@ type Item struct {
 	PublishedAt time.Time
 }
 
-func NewClient(timeout time.Duration) *Client {
+type Option func(*options)
+
+type options struct {
+	allowLoopback bool
+}
+
+func WithLoopbackAllowed() Option {
+	return func(o *options) { o.allowLoopback = true }
+}
+
+func NewClient(timeout time.Duration, opts ...Option) *Client {
+	var cfg options
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	dialer := &net.Dialer{
+		Timeout: timeout,
+		Control: func(_, address string, _ syscall.RawConn) error {
+			return checkDialAddress(address, cfg.allowLoopback)
+		},
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	transport.DialContext = dialer.DialContext
+
 	return &Client{
-		http:   &http.Client{Timeout: timeout},
+		http: &http.Client{
+			Timeout:   timeout,
+			Transport: transport,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= maxRedirects {
+					return fmt.Errorf("cannot follow more than %d redirects", maxRedirects)
+				}
+
+				return checkScheme(req.URL)
+			},
+		},
 		parser: gofeed.NewParser(),
 	}
+}
+
+func checkScheme(target *url.URL) error {
+	if target.Scheme != "http" && target.Scheme != "https" {
+		return fmt.Errorf("cannot use scheme %q: only http and https are allowed", target.Scheme)
+	}
+
+	return nil
+}
+
+func checkDialAddress(address string, allowLoopback bool) error {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("cannot parse dial address %q: %w", address, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return fmt.Errorf("cannot parse dial ip %q", host)
+	}
+
+	if ip.IsLoopback() && allowLoopback {
+		return nil
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return fmt.Errorf("cannot connect to %s: address is not public", ip)
+	}
+
+	return nil
 }
 
 func (c *Client) Fetch(ctx context.Context, feedURL domain.URL) ([]Item, error) {
@@ -105,6 +172,9 @@ func (c *Client) get(ctx context.Context, target domain.URL) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, string(target), nil)
 	if err != nil {
 		return nil, fmt.Errorf("cannot build request for %s: %w", target, err)
+	}
+	if err := checkScheme(req.URL); err != nil {
+		return nil, fmt.Errorf("cannot get %s: %w", target, err)
 	}
 	req.Header.Set("User-Agent", userAgent)
 

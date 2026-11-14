@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,7 +49,7 @@ func mustURL(t *testing.T, raw string) domain.URL {
 func TestFetchRSSReturnsPlainExcerpt(t *testing.T) {
 	srv := serveFixtures(t, map[string]string{"/feed.xml": "rss.xml"})
 
-	items, err := feed.NewClient(timeout).Fetch(context.Background(), mustURL(t, srv.URL+"/feed.xml"))
+	items, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Fetch(context.Background(), mustURL(t, srv.URL+"/feed.xml"))
 
 	require.NoError(t, err)
 	require.Len(t, items, 2)
@@ -61,7 +62,7 @@ func TestFetchRSSReturnsPlainExcerpt(t *testing.T) {
 func TestFetchAtom(t *testing.T) {
 	srv := serveFixtures(t, map[string]string{"/atom.xml": "atom.xml"})
 
-	items, err := feed.NewClient(timeout).Fetch(context.Background(), mustURL(t, srv.URL+"/atom.xml"))
+	items, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Fetch(context.Background(), mustURL(t, srv.URL+"/atom.xml"))
 
 	require.NoError(t, err)
 	require.Len(t, items, 1)
@@ -72,7 +73,7 @@ func TestFetchAtom(t *testing.T) {
 func TestFetchItemWithoutDateHasZeroTime(t *testing.T) {
 	srv := serveFixtures(t, map[string]string{"/nodate.xml": "nodate.xml"})
 
-	items, err := feed.NewClient(timeout).Fetch(context.Background(), mustURL(t, srv.URL+"/nodate.xml"))
+	items, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Fetch(context.Background(), mustURL(t, srv.URL+"/nodate.xml"))
 
 	require.NoError(t, err)
 	require.Len(t, items, 1)
@@ -88,7 +89,7 @@ func TestFetchCutsExcerptAt500Characters(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	items, err := feed.NewClient(timeout).Fetch(context.Background(), mustURL(t, srv.URL))
+	items, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Fetch(context.Background(), mustURL(t, srv.URL))
 
 	require.NoError(t, err)
 	require.Len(t, items, 1)
@@ -105,7 +106,7 @@ func TestFetchTimesOut(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	started := time.Now()
-	_, err := feed.NewClient(200*time.Millisecond).Fetch(context.Background(), mustURL(t, srv.URL))
+	_, err := feed.NewClient(200*time.Millisecond, feed.WithLoopbackAllowed()).Fetch(context.Background(), mustURL(t, srv.URL))
 
 	require.Error(t, err)
 	require.Less(t, time.Since(started), time.Second)
@@ -115,7 +116,7 @@ func TestResolveFeedURLItself(t *testing.T) {
 	srv := serveFixtures(t, map[string]string{"/rss.xml": "rss.xml"})
 	feedURL := mustURL(t, srv.URL+"/rss.xml")
 
-	info, err := feed.NewClient(timeout).Resolve(context.Background(), feedURL)
+	info, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Resolve(context.Background(), feedURL)
 
 	require.NoError(t, err)
 	require.Equal(t, feedURL, info.FeedURL)
@@ -127,7 +128,7 @@ func TestResolveFeedURLItself(t *testing.T) {
 func TestResolveFromAlternateLink(t *testing.T) {
 	srv := serveFixtures(t, map[string]string{"/blog": "page.html", "/feed.xml": "rss.xml"})
 
-	info, err := feed.NewClient(timeout).Resolve(context.Background(), mustURL(t, srv.URL+"/blog"))
+	info, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Resolve(context.Background(), mustURL(t, srv.URL+"/blog"))
 
 	require.NoError(t, err)
 	require.Equal(t, mustURL(t, srv.URL+"/feed.xml"), info.FeedURL)
@@ -136,7 +137,7 @@ func TestResolveFromAlternateLink(t *testing.T) {
 func TestResolveFromCommonPath(t *testing.T) {
 	srv := serveFixtures(t, map[string]string{"/blog": "page-nolink.html", "/rss.xml": "rss.xml"})
 
-	info, err := feed.NewClient(timeout).Resolve(context.Background(), mustURL(t, srv.URL+"/blog"))
+	info, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Resolve(context.Background(), mustURL(t, srv.URL+"/blog"))
 
 	require.NoError(t, err)
 	require.Equal(t, mustURL(t, srv.URL+"/rss.xml"), info.FeedURL)
@@ -145,7 +146,62 @@ func TestResolveFromCommonPath(t *testing.T) {
 func TestResolveWithoutFeedIsNotFound(t *testing.T) {
 	srv := serveFixtures(t, map[string]string{"/blog": "page-nolink.html"})
 
-	_, err := feed.NewClient(timeout).Resolve(context.Background(), mustURL(t, srv.URL+"/blog"))
+	_, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Resolve(context.Background(), mustURL(t, srv.URL+"/blog"))
 
 	require.ErrorIs(t, err, domain.ErrNotFound)
+}
+
+func TestStrictClientRefusesLoopback(t *testing.T) {
+	var hit atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hit.Store(true)
+		_, _ = w.Write([]byte("secret"))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := feed.NewClient(timeout).Fetch(context.Background(), mustURL(t, srv.URL))
+
+	require.Error(t, err)
+	require.False(t, hit.Load())
+}
+
+func TestStrictClientRefusesPrivateAndLinkLocalAddresses(t *testing.T) {
+	for _, raw := range []string{"http://10.0.0.1/feed", "http://192.168.1.1/feed", "http://169.254.169.254/feed", "http://0.0.0.0/feed"} {
+		t.Run(raw, func(t *testing.T) {
+			started := time.Now()
+
+			_, err := feed.NewClient(timeout).Fetch(context.Background(), domain.URL(raw))
+
+			require.Error(t, err)
+			require.Less(t, time.Since(started), time.Second)
+		})
+	}
+}
+
+func TestFetchRefusesNonHTTPScheme(t *testing.T) {
+	_, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Fetch(context.Background(), domain.URL("file:///etc/passwd"))
+
+	require.Error(t, err)
+}
+
+func TestFetchRefusesRedirectToDisallowedScheme(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "ftp://example.com/feed", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Fetch(context.Background(), mustURL(t, srv.URL))
+
+	require.Error(t, err)
+}
+
+func TestFetchRefusesRedirectLoop(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, r.URL.Path+"x", http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Fetch(context.Background(), mustURL(t, srv.URL))
+
+	require.Error(t, err)
 }
