@@ -1,0 +1,34 @@
+# The blog list. Load it with: blogger sources import --apply - < blogs.yaml
+# (see .claude/skills/manage-blogs). Entries with only `url` get their feed found on import.
+sources:
+  - url: https://matklad.github.io/
+  - url: https://fabiensanglard.net/
+  - url: https://www.langchain.com/blog
+    feed: https://www.langchain.com/blog/rss.xml
+  - url: https://stripe.dev/blog
+  - url: https://keenagi.com/
+  - url: https://boristane.com/blog
+  - url: https://www.conductor.build/blog
+  - url: https://coder.com/blog
+  - url: https://go.dev/blog/
+  - url: https://victoriametrics.com/blog/index.html
+  - url: https://overreacted.io/
+  - url: https://aws.amazon.com/blogs/aws/
+    feed: https://aws.amazon.com/blogs/aws/feed/
+  - url: https://monzo.com/blog/topic/technology
+  - url: https://paulhammant.com/
+  - url: https://martinfowler.com/bliki/
+    feed: https://martinfowler.com/bliki/bliki.atom
+  - url: https://www.ybrikman.com/blog/
+  - url: https://www.kitchensoap.com/
+  - url: https://p.umputun.com/
+  - url: https://addyosmani.com/blog/
+  - url: https://empryo.com/blog
+  - url: https://superplane.com/blog/
+
+# No RSS/Atom feed found (2026-11-14); the bot reads feeds only, so these are not loaded:
+#   https://claude.com/resources/articles
+#   https://www.greptile.com/blog
+#   https://www.gruntwork.io/blog
+# Same feed as https://stripe.dev/blog (https://stripe.dev/blog/feed), so not listed twice:
+#   https://stripe.dev/blog/topic/engineering
