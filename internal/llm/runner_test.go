@@ -238,6 +238,20 @@ func TestAllBackendsFailReturnsErrAllBackendsFailed(t *testing.T) {
 	require.ErrorIs(t, err, llm.ErrAllBackendsFailed)
 }
 
+func TestCancelDuringLastBackendReturnsContextError(t *testing.T) {
+	f := newFakeAgents(t, llm.Claude)
+	f.answer("claude", llm.SkillPickArticles, picksAnswer(URLA))
+	f.write("claude.sleep", "5")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(300*time.Millisecond, cancel)
+
+	_, _, err := f.runner().PickArticles(ctx, pickInput())
+
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotErrorIs(t, err, llm.ErrAllBackendsFailed)
+}
+
 func TestCodexOSSSkippedWithoutModel(t *testing.T) {
 	f := newFakeAgents(t, llm.CodexOSS)
 	f.answer("codex", llm.SkillPickArticles, picksAnswer(URLA))

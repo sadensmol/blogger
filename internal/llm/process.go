@@ -57,7 +57,9 @@ func runProcess(ctx context.Context, d processData) error {
 
 	if err := cmd.Run(); err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-			killGroup(ctx, cmd.Process.Pid)
+			if cmd.Process != nil {
+				killGroup(ctx, cmd.Process.Pid)
+			}
 			return fmt.Errorf("%s ran longer than %s: %w", d.Bin, d.Timeout, err)
 		}
 		return fmt.Errorf("%s failed: %w", d.Bin, err)

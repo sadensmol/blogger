@@ -70,6 +70,9 @@ func (r *Runner) run(ctx context.Context, req jobRequest, accept func(answer []b
 		}
 		return backend.Name(), nil
 	}
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("%s job stopped: %w", job.Skill, err)
+	}
 	return "", fmt.Errorf("%s: %w", job.Skill, ErrAllBackendsFailed)
 }
 
