@@ -361,3 +361,13 @@ func TestJobFolderRemovedAfterSuccessKeptAfterFailure(t *testing.T) {
 	require.FileExists(t, filepath.Join(f.jobsDir, entries[0].Name(), "input.json"))
 	require.FileExists(t, filepath.Join(f.jobsDir, entries[0].Name(), "stderr.log"))
 }
+
+func TestClaudeAutoUpdateIsOff(t *testing.T) {
+	f := newFakeAgents(t, llm.Claude)
+	f.answer("claude", llm.SkillPickArticles, picksAnswer(URLA))
+
+	_, _, err := f.runner().PickArticles(context.Background(), pickInput())
+
+	require.NoError(t, err)
+	require.Contains(t, f.envKeys("claude"), "DISABLE_AUTOUPDATER")
+}

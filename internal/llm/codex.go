@@ -58,7 +58,7 @@ func (c *CodexBackend) answer(ctx context.Context, job Job, flags, login []strin
 	err := runProcess(ctx, processData{
 		Bin:      c.cfg.CodexBin,
 		Args:     args,
-		LoginEnv: login,
+		Env:      login,
 		Home:     c.cfg.Home,
 		WorkDir:  c.cfg.AgentDir,
 		JobDir:   job.Dir,

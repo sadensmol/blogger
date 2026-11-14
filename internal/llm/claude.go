@@ -50,15 +50,16 @@ func (c *ClaudeBackend) Answer(ctx context.Context, job Job) ([]byte, error) {
 	}
 	args = append(args, "--add-dir", job.Dir, "--no-session-persistence")
 
-	var login []string
+	// the native install updates itself; the pinned version is the one the tests saw
+	env := []string{"DISABLE_AUTOUPDATER=1"}
 	if c.cfg.ClaudeToken != "" {
-		login = append(login, fmt.Sprintf("CLAUDE_CODE_OAUTH_TOKEN=%s", c.cfg.ClaudeToken))
+		env = append(env, fmt.Sprintf("CLAUDE_CODE_OAUTH_TOKEN=%s", c.cfg.ClaudeToken))
 	}
 
 	err = runProcess(ctx, processData{
 		Bin:      c.cfg.ClaudeBin,
 		Args:     args,
-		LoginEnv: login,
+		Env:      env,
 		Home:     c.cfg.Home,
 		WorkDir:  c.cfg.AgentDir,
 		JobDir:   job.Dir,
