@@ -18,7 +18,7 @@ Use two Slack apps. Two Socket Mode connections of one app split the events. The
 3. Check that **Socket Mode** is on. The manifest turns it on. Help: https://docs.slack.dev/apis/events-api/using-socket-mode
 4. Under **Basic Information → App-Level Tokens**, generate a token with the scope `connections:write`. You need it for `SLACK_APP_TOKEN`.
 5. Under **Install App**, install the app to the workspace. Copy the Bot User OAuth Token. You need it for `SLACK_BOT_TOKEN`. Help: https://docs.slack.dev/authentication/tokens
-6. Create the channel `#news-dev`. In it, type `/invite @blogger-dev`.
+6. Create the channel `#news-dev`. In it, type `/invite @blogger`.
 7. Copy the channel ID of `#news-dev` from the channel details. It starts with `C`. You need it for `SLACK_CHANNEL_ID`.
 8. Copy your member ID from your Slack profile. It starts with `U`. You need it for `SLACK_OWNER_USER_ID`.
 9. Copy `deploy/dev.env.example` to `~/.config/blogger/dev.env`. Run `chmod 600 ~/.config/blogger/dev.env`. Fill in the values.

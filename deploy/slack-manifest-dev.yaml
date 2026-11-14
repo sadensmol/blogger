@@ -1,8 +1,8 @@
 display_information:
-  name: Blogger Dev
+  name: Blogger
   description: Daily blog picks for one reader
 features:
-  bot_user: {display_name: blogger-dev, always_online: true}
+  bot_user: {display_name: blogger, always_online: true}
   slash_commands:
     - {command: /show, description: Pick articles now, should_escape: false}
     - command: /blogs
