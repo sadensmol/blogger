@@ -41,6 +41,7 @@ type SchedulerTestSuite struct {
 	slack     *tests.FakeSlack
 	agents    *tests.FakeAgents
 	runs      *testsrepository.Run
+	sourceID  int64
 	location  *time.Location
 	scheduler *scheduler.Scheduler
 }
@@ -60,7 +61,7 @@ func (s *SchedulerTestSuite) SetupTest() {
 	s.Require().NoError(err)
 
 	s.feeds.Set(schedulerFeedPath, "application/rss+xml", fmt.Sprintf(itemsFmt, fmt.Sprintf(itemFmt, schedulerArticle, s.articleURL())))
-	_, err = testsrepository.NewSource(s.DB).Insert(s.Ctx, testsrepository.SourceRow{
+	s.sourceID, err = testsrepository.NewSource(s.DB).Insert(s.Ctx, testsrepository.SourceRow{
 		FeedURL: fmt.Sprintf("%s%s", s.feeds.URL(), schedulerFeedPath),
 		Status:  string(domain.SourceActive),
 	}, s.Clock.Now())
@@ -163,6 +164,18 @@ func (s *SchedulerTestSuite) localTime(hour, minute int) time.Time {
 	return time.Date(2026, 11, 14, hour, minute, 0, 0, s.location)
 }
 
+func (s *SchedulerTestSuite) seedFreshFetch() {
+	_, err := testsrepository.NewArticle(s.DB).Insert(s.Ctx, testsrepository.ArticleRow{
+		SourceID:    s.sourceID,
+		URL:         s.articleURL(),
+		PublishedAt: s.Clock.Now().Add(-time.Hour),
+		Now:         s.Clock.Now(),
+	})
+	s.Require().NoError(err)
+	_, err = s.runs.Insert(s.Ctx, string(domain.RunKindFetch), string(domain.RunStatusOK), s.Clock.Now().Add(-time.Hour))
+	s.Require().NoError(err)
+}
+
 func (s *SchedulerTestSuite) runStatus(kind domain.RunKind) string {
 	result, err := s.runs.LatestByKind(s.Ctx, string(kind))
 	if err != nil {
@@ -194,6 +207,7 @@ func (s *SchedulerTestSuite) headers() int {
 
 func (s *SchedulerTestSuite) TestTickRunsMorningDigestOnce() {
 	s.Clock.Set(s.localTime(10, 1))
+	s.seedFreshFetch()
 
 	s.scheduler.Tick(s.Ctx)
 	s.scheduler.Tick(s.Ctx)
@@ -206,6 +220,7 @@ func (s *SchedulerTestSuite) TestTickRunsMorningDigestOnce() {
 
 func (s *SchedulerTestSuite) TestTickAfterLateStartCatchesUp() {
 	s.Clock.Set(s.localTime(11, 30))
+	s.seedFreshFetch()
 
 	s.scheduler.Tick(s.Ctx)
 	s.waitForRun(domain.RunKindDigestMorning)
@@ -224,6 +239,7 @@ func (s *SchedulerTestSuite) TestTickWithWrongClockDoesNothing() {
 
 func (s *SchedulerTestSuite) TestTickRunsDiscoveryAfterMorningWhenWeekPassed() {
 	s.Clock.Set(s.localTime(10, 1))
+	s.seedFreshFetch()
 	_, err := s.runs.Insert(s.Ctx, string(domain.RunKindDiscovery), string(domain.RunStatusOK), s.Clock.Now().Add(-8*24*time.Hour))
 	s.Require().NoError(err)
 
