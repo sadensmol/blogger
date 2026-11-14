@@ -203,6 +203,17 @@ func (s *SourcesTestSuite) TestImportApplyKeepsVotesOfKeptSources() {
 	s.Equal(string(domain.SourceActive), cStatus)
 }
 
+func (s *SourcesTestSuite) TestImportDashReadsInput() {
+	feedA := s.feeds.URL() + "/a.xml"
+
+	out, err := s.runCLI(fmt.Sprintf("sources:\n  - feed: %s\n", feedA), "import", "--apply", "-")
+
+	s.Require().NoError(err)
+	s.Contains(out, "Applied 1 changes.")
+	_, err = s.sources.IDByFeedURL(s.Ctx, feedA)
+	s.Require().NoError(err)
+}
+
 func (s *SourcesTestSuite) TestExportPrintsAllNotDeletedSources() {
 	idA := s.insertSource(s.feeds.URL()+"/a.xml", "A", domain.SourceActive)
 	s.insertSource(s.feeds.URL()+"/b.xml", "B", domain.SourcePaused)

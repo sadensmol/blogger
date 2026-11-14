@@ -27,14 +27,12 @@ func liveRunner(t *testing.T, backend llm.Backend) *llm.Runner {
 
 	agentDir, err := filepath.Abs("../../agent")
 	require.NoError(t, err)
-	claudeBin, err := filepath.Abs("testdata/live-claude.sh")
-	require.NoError(t, err)
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)
 
 	backends, err := llm.NewBackends(llm.Config{
 		Order:     []llm.Backend{backend},
-		ClaudeBin: claudeBin,
+		ClaudeBin: "claude",
 		CodexBin:  "codex",
 		AgentDir:  agentDir,
 		Home:      home,

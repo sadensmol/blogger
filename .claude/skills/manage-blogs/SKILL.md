@@ -15,16 +15,15 @@ This skill is the only way the user changes the `## My notes` part of the intere
 ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local '<board command>'
 ```
 
-Put a `< file` redirect outside the quotes, so the local file goes to the container's input:
-
-```bash
-ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 300 docker exec -i blogger blogger sources import -' < .scratch/sources.yaml
-```
-
-**Local test mode.** When the user says they work locally, run the same `blogger` arguments on the Mac, from the repo root, with `go run ./cmd/blogger` and the dev env file. Load the env file in a subshell. Never print it:
+**Local test mode.** When the user says they work locally, run the same `blogger` arguments on the Mac, from the repo root, with `go run ./cmd/blogger` and the dev env file. Source the env file in a subshell, as shown. Never print it:
 
 ```bash
 (set -a; . ~/.config/blogger/dev.env; set +a; go run ./cmd/blogger sources export)
+```
+
+A command that reads stdin gets the file through a redirect outside the subshell:
+
+```bash
 (set -a; . ~/.config/blogger/dev.env; set +a; go run ./cmd/blogger sources import -) < .scratch/sources.yaml
 ```
 
@@ -42,30 +41,46 @@ ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbo
 To replace the full list:
 
 1. Save the output of `sources export` to `.scratch/sources.yaml`.
-2. Edit the file as the user asks. Keep its YAML shape: `sources:` with `url`, `feed`, `title` and `status` entries.
-3. Run a dry run: `timeout 300 docker exec -i blogger blogger sources import - < .scratch/sources.yaml`.
+2. Edit the file as the user asks. Keep its YAML shape. Keep every field the user does not change, as exported: `id`, `url`, `feed`, `title`, `status`, `origin`, `up` and `down`.
+3. Run a dry run. The `< file` redirect stays outside the ssh quotes, so it runs on the Mac:
+
+   ```bash
+   ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 300 docker exec -i blogger blogger sources import -' < .scratch/sources.yaml
+   ```
+
 4. Show the user the change lines (`+ add`, `- remove`, `~ change`). Ask for a yes.
-5. Only after the user's yes, run it again with `--apply`: `timeout 300 docker exec -i blogger blogger sources import --apply - < .scratch/sources.yaml`.
+5. Only after the user's yes, run it again with `--apply`:
+
+   ```bash
+   ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 300 docker exec -i blogger blogger sources import --apply -' < .scratch/sources.yaml
+   ```
 
 ## Interests and notes
 
-| User asks | Board command |
-|---|---|
-| show the interests | `timeout 20 docker exec blogger blogger profile show` |
-| change the notes | `timeout 20 docker exec -i blogger blogger profile set-notes - < .scratch/notes.md` |
+Show the interests:
 
-`profile show` prints the whole interests file, or `No interests file yet.`
+```bash
+ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 20 docker exec blogger blogger profile show'
+```
+
+It prints the whole interests file, or `No interests file yet.`
 
 To change the notes:
 
 1. Run `profile show`. Read the current `## My notes` text.
 2. Write the new notes text to `.scratch/notes.md`: the text only, without the `## My notes` heading.
 3. Show the new notes to the user. Ask for a yes.
-4. Only after the user's yes, run `profile set-notes`. It prints `Notes saved.`
+4. Only after the user's yes, send the notes. The `< file` redirect stays outside the ssh quotes:
+
+   ```bash
+   ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 20 docker exec -i blogger blogger profile set-notes -' < .scratch/notes.md
+   ```
+
+   It prints `Notes saved.`
 5. Run `profile show` again. Show the user the result.
 
 The bot rewrites `## Learned` itself from the votes. Do not change `## Learned`.
 
 ## Secrets
 
-Never print, copy or show secrets. Never read or print `~/blogger/.env`, the files in `~/blogger/codex/` or `~/.config/blogger/`, or the output of `docker exec … env`. When you must check a key, print its name only.
+Never print, copy or show secrets. Never print or `cat` the files in `~/.config/blogger/`, `~/blogger/.env` or `~/blogger/codex/`, or the output of `docker exec … env`. Sourcing `~/.config/blogger/dev.env` in a subshell for local test mode is allowed. When you must check a key, print its name only.

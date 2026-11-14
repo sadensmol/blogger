@@ -9,7 +9,7 @@ test:
 	go test ./...
 
 test-live:
-	go test -tags live ./internal/llm/... -v
+	go test -tags live ./internal/llm/... -v -timeout 30m
 
 image:
 	docker build --platform linux/arm64 --build-arg TAG=$(TAG) -t blogger:$(TAG) .

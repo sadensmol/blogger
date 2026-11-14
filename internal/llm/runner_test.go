@@ -306,6 +306,16 @@ func TestClaudeGetsOnlyItsLogin(t *testing.T) {
 	require.NotContains(t, f.envKeys("claude"), "SLACK_BOT_TOKEN")
 }
 
+func TestAgentGetsUser(t *testing.T) {
+	f := newFakeAgents(t, llm.Claude)
+	f.answer("claude", llm.SkillPickArticles, picksAnswer(URLA))
+
+	_, _, err := f.runner().PickArticles(context.Background(), pickInput())
+
+	require.NoError(t, err)
+	require.Contains(t, f.envKeys("claude"), "USER")
+}
+
 func TestCodexNeverGetsClaudeToken(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "x")
 	f := newFakeAgents(t, llm.Claude, llm.Codex)

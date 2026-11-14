@@ -16,7 +16,7 @@ import (
 	"github.com/sadensmol/blogger/internal/service"
 )
 
-const sourcesUsage = "usage: blogger sources add <url> | remove|pause|resume <id-or-url> | list | export | import [--apply] [file]"
+const sourcesUsage = "usage: blogger sources add <url> | remove|pause|resume <id-or-url> | list | export | import [--apply] [file|-]"
 
 type SourcesData struct {
 	Svc  *service.Source
@@ -201,7 +201,7 @@ func importSources(ctx context.Context, d SourcesData, args []string) error {
 
 	var file sourcesFile
 	var err error
-	if len(paths) == 1 {
+	if len(paths) == 1 && paths[0] != "-" {
 		file, err = readSourcesFile(ctx, paths[0])
 	} else {
 		file, err = decodeSourcesFile(d.In)

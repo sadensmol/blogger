@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"syscall"
 	"time"
@@ -18,7 +19,7 @@ const killDelay = 10 * time.Second
 type processData struct {
 	Bin      string
 	Args     []string
-	LoginEnv []string // the program's own login; HOME and PATH are always set
+	LoginEnv []string // the program's own login; HOME, PATH and USER are always set
 	Home     string
 	WorkDir  string
 	JobDir   string
@@ -48,7 +49,11 @@ func runProcess(ctx context.Context, d processData) error {
 
 	cmd := exec.CommandContext(runCtx, d.Bin, d.Args...)
 	cmd.Dir = d.WorkDir
-	cmd.Env = append([]string{fmt.Sprintf("HOME=%s", d.Home), fmt.Sprintf("PATH=%s", os.Getenv("PATH"))}, d.LoginEnv...)
+	cmd.Env = append([]string{
+		fmt.Sprintf("HOME=%s", d.Home),
+		fmt.Sprintf("PATH=%s", os.Getenv("PATH")),
+		fmt.Sprintf("USER=%s", userName()),
+	}, d.LoginEnv...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -65,6 +70,14 @@ func runProcess(ctx context.Context, d processData) error {
 		return fmt.Errorf("%s failed: %w", d.Bin, err)
 	}
 	return nil
+}
+
+// userName is needed on macOS: claude finds its keychain login only when USER is set.
+func userName() string {
+	if u, err := user.Current(); err == nil {
+		return u.Username
+	}
+	return os.Getenv("USER")
 }
 
 // killGroup kills what is left of the program's process group: WaitDelay kills only the program itself.
