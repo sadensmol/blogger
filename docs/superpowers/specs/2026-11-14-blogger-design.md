@@ -29,7 +29,8 @@ with 👍 or 👎. The ratings change what the bot picks next time. The bot gets
 ## Anti-goals (failure even if it works)
 
 - The bot posts everything new. The value is the selection.
-- The bot posts the same article twice.
+- The bot posts the same article twice in one digest, or ever again after the user voted on it.
+  An unvoted article may come back later (user decision 2026-11-14: at most 3 shows, 7 days apart).
 - The bot uses a Claude subscription token outside the official `claude` binary. Anthropic does
   not allow that (Claude Code legal and compliance page).
 - The bot wedges the 8 GB board (memory thrash).
