@@ -1,0 +1,10 @@
+.env
+*.env
+!deploy/.env.example
+!deploy/settings.env
+auth.json
+secrets*
+.claude/settings.local.json
+.scratch/
+.superpowers/
+bin/
