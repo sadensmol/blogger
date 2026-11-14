@@ -7,6 +7,7 @@ require (
 	github.com/mmcdole/gofeed v1.5.0
 	github.com/pressly/goose/v3 v3.30.1
 	github.com/rs/zerolog v1.35.1
+	github.com/slack-go/slack v0.35.0
 	github.com/stretchr/testify v1.12.1
 	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/net v0.62.0
@@ -16,6 +17,7 @@ require (
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mfridman/interpolate v0.2.0 // indirect
