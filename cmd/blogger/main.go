@@ -14,7 +14,7 @@ import (
 
 var version = "dev"
 
-const usage = "usage: blogger version | sources ..."
+const usage = "usage: blogger version | sources ... | profile ..."
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -29,14 +29,18 @@ func run(args []string) int {
 	case "version":
 		fmt.Printf("blogger %s\n", version)
 		return 0
-	case "sources":
+	case "sources", "profile":
 		cfg, err := config.LoadStore()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
 		logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
-		if err := app.SourcesCLI(logger.WithContext(context.Background()), cfg, args[1:]); err != nil {
+		cli := app.SourcesCLI
+		if args[0] == "profile" {
+			cli = app.ProfileCLI
+		}
+		if err := cli(logger.WithContext(context.Background()), cfg, args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}

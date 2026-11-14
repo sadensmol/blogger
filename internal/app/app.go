@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	dbFileName  = "blogger.db"
+	dbFileName        = "blogger.db"
+	interestsFileName = "interests.md"
 	feedTimeout = 20 * time.Second
 )
 
@@ -35,6 +36,24 @@ func SourcesCLI(ctx context.Context, cfg config.Store, args []string) error {
 	svc := service.NewSource(repository.NewSource(db), feed.NewClient(feedTimeout), time.Now)
 	if err := controllercli.Sources(ctx, controllercli.SourcesData{Svc: svc, Args: args, In: os.Stdin, Out: os.Stdout}); err != nil {
 		return fmt.Errorf("sources: %w", err)
+	}
+	return nil
+}
+
+func ProfileCLI(ctx context.Context, cfg config.Store, args []string) error {
+	db, err := repository.Open(ctx, filepath.Join(cfg.DataDir, dbFileName))
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Ctx(ctx).Error().Err(err).Msgf("cannot close database in %s", cfg.DataDir)
+		}
+	}()
+
+	svc := service.NewProfile(filepath.Join(cfg.DataDir, interestsFileName), repository.NewProfileVersion(db), time.Now)
+	if err := controllercli.Profile(ctx, controllercli.ProfileData{Svc: svc, Args: args, In: os.Stdin, Out: os.Stdout}); err != nil {
+		return fmt.Errorf("profile: %w", err)
 	}
 	return nil
 }
