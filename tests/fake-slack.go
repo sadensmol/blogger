@@ -13,6 +13,10 @@ type FakeSlack struct {
 	URL        string
 	FailMethod string
 
+	// a call to BlockMethod runs OnBlock, then waits until the client gives up
+	BlockMethod string
+	OnBlock     func()
+
 	server    *httptest.Server
 	mu        sync.Mutex
 	posted    []string
@@ -33,6 +37,18 @@ func (f *FakeSlack) Close() {
 }
 
 func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
+	method := strings.TrimPrefix(r.URL.Path, "/api/")
+	if method == f.BlockMethod && f.OnBlock != nil {
+		// the server sees the client go away only after the body is read
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		f.OnBlock()
+		<-r.Context().Done()
+		return
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -43,7 +59,6 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	method := strings.TrimPrefix(r.URL.Path, "/api/")
 	w.Header().Set("Content-Type", "application/json")
 	if method == f.FailMethod {
 		_, _ = w.Write([]byte(`{"ok":false,"error":"fake_failure"}`))

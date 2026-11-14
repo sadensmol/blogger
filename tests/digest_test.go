@@ -1,6 +1,7 @@
 package tests_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -29,6 +30,7 @@ const (
 	digestSize       = 5
 	digestNotes      = "Go"
 	digestLearned    = "Likes small tools."
+	answeredLearned  = "Likes Go."
 	digestProfileFmt = "## My notes\n%s\n\n## Learned\n%s\n"
 	nothingLine      = "Nothing worth reading today."
 	failureLine      = "Digest failed: no agent could pick articles. See the logs."
@@ -156,7 +158,7 @@ func (s *DigestTestSuite) answerPicks(names ...string) {
 }
 
 func (s *DigestTestSuite) answerProfile(skill llm.Skill, notes string) {
-	s.agents.Answer(llm.Claude, skill, map[string]any{"interests_md": fmt.Sprintf(digestProfileFmt, notes, "Likes Go.")})
+	s.agents.Answer(llm.Claude, skill, map[string]any{"interests_md": fmt.Sprintf(digestProfileFmt, notes, answeredLearned)})
 }
 
 func (s *DigestTestSuite) pickCandidates() []string {
@@ -267,9 +269,9 @@ func (s *DigestTestSuite) TestAllBackendsFailPostsFailureLine() {
 }
 
 func (s *DigestTestSuite) TestFirstRunBuildsProfileFromSources() {
-	s.addBlog("a", "b")
+	s.addBlog("a", "b", "c", "d", "e", "f")
 	s.answerProfile(llm.SkillInitProfile, digestNotes)
-	s.answerPicks("a")
+	s.answerPicks("f")
 
 	err := s.digest.Run(s.Ctx, domain.RunKindDigestMorning)
 
@@ -282,6 +284,32 @@ func (s *DigestTestSuite) TestFirstRunBuildsProfileFromSources() {
 	s.Require().NoError(err)
 	s.Equal(string(domain.ProfileInit), change)
 	s.Equal(string(domain.RunStatusOK), s.latestRun(domain.RunKindProfileInit).Status)
+	var input struct {
+		Sources []struct {
+			RecentTitles []string `json:"recent_titles"`
+		} `json:"sources"`
+	}
+	s.Require().NoError(json.Unmarshal(s.agents.Input(llm.Claude, llm.SkillInitProfile), &input))
+	s.Require().Len(input.Sources, 1)
+	s.Equal([]string{"f", "e", "d", "c", "b"}, input.Sources[0].RecentTitles)
+}
+
+func (s *DigestTestSuite) TestFailedProfileInitKeepsOldProfile() {
+	s.addBlog("a", "b")
+	s.writeProfile(digestNotes, "")
+	s.answerPicks("a")
+
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestMorning)
+
+	s.Require().NoError(err)
+	s.Equal(string(domain.RunStatusFailed), s.latestRun(domain.RunKindProfileInit).Status)
+	s.Equal(string(domain.RunStatusOK), s.latestRun(domain.RunKindDigestMorning).Status)
+	var input struct {
+		InterestsMD string `json:"interests_md"`
+	}
+	s.Require().NoError(json.Unmarshal(s.agents.Input(llm.Claude, llm.SkillPickArticles), &input))
+	s.Equal(fmt.Sprintf(digestProfileFmt, digestNotes, ""), input.InterestsMD)
+	s.Equal(1, s.CountRows("post"))
 }
 
 func (s *DigestTestSuite) TestInitRunsWhenOnlyNotesExist() {
@@ -303,7 +331,7 @@ func (s *DigestTestSuite) TestInitRunsWhenOnlyNotesExist() {
 	s.Contains(input.InterestsMD, digestNotes)
 	saved, err := os.ReadFile(s.profilePath)
 	s.Require().NoError(err)
-	s.Equal(digestNotes, domain.Profile(saved).Notes())
+	s.Equal(fmt.Sprintf(digestProfileFmt, digestNotes, answeredLearned), string(saved))
 }
 
 func (s *DigestTestSuite) TestNewVotesUpdateProfileBeforePick() {
@@ -373,5 +401,20 @@ func (s *DigestTestSuite) TestReactionFailureStillStoresPost() {
 
 	s.Require().NoError(err)
 	s.Len(s.slack.Posted(), 2)
+	s.Equal(1, s.CountRows("post"))
+}
+
+func (s *DigestTestSuite) TestCancelWhileAddingReactionsStillStoresPost() {
+	s.addBlog("a", "b")
+	s.learnedProfile()
+	s.answerPicks("a")
+	ctx, cancel := context.WithCancel(s.Ctx)
+	defer cancel()
+	s.slack.BlockMethod = "reactions.add"
+	s.slack.OnBlock = cancel
+
+	err := s.digest.Run(ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
 	s.Equal(1, s.CountRows("post"))
 }

@@ -82,14 +82,17 @@ func (d *Digest) Run(ctx context.Context, kind domain.RunKind) error {
 func (d *Digest) digest(ctx context.Context, kind domain.RunKind, runID domain.RunID) (llm.Backend, error) {
 	sources, err := d.sources.ListActiveOrTrial(ctx)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot list blogs: %w", err)
 	}
 	if len(sources) == 0 {
 		if kind == domain.RunKindDigestMorning {
 			log.Ctx(ctx).Info().Msgf("no blogs: morning digest skipped")
 			return "", nil
 		}
-		return "", d.poster.Text(ctx, noBlogsText)
+		if err := d.poster.Text(ctx, noBlogsText); err != nil {
+			return "", fmt.Errorf("cannot post the no-blogs hint: %w", err)
+		}
+		return "", nil
 	}
 
 	if err := d.articles.FetchIfOlderThan(ctx, fetchMaxAge); err != nil {
@@ -98,15 +101,18 @@ func (d *Digest) digest(ctx context.Context, kind domain.RunKind, runID domain.R
 
 	profile, err := d.learnedProfile(ctx, sources)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot prepare the interests file: %w", err)
 	}
 
 	candidates, err := d.articles.Candidates(ctx)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot read candidates: %w", err)
 	}
 	if len(candidates) == 0 {
-		return "", d.poster.Text(ctx, nothingText)
+		if err := d.poster.Text(ctx, nothingText); err != nil {
+			return "", fmt.Errorf("cannot post that no article is new: %w", err)
+		}
+		return "", nil
 	}
 
 	picks, backend, err := d.llm.PickArticles(ctx, llm.PickInput{Candidates: candidates, Profile: profile, Max: d.size})
@@ -119,19 +125,22 @@ func (d *Digest) digest(ctx context.Context, kind domain.RunKind, runID domain.R
 		return "", fmt.Errorf("cannot pick articles: %w", err)
 	}
 	if len(picks) == 0 {
-		return backend, d.poster.Text(ctx, nothingText)
+		if err := d.poster.Text(ctx, nothingText); err != nil {
+			return backend, fmt.Errorf("cannot post that nothing fits: %w", err)
+		}
+		return backend, nil
 	}
 
 	if err := d.poster.Text(ctx, d.header(kind, len(picks))); err != nil {
-		return backend, err
+		return backend, fmt.Errorf("cannot post the digest header: %w", err)
 	}
 	articles := make(map[domain.URL]domain.Article, len(candidates))
 	for _, a := range candidates {
 		articles[a.URL] = a
 	}
-	for _, pick := range picks {
+	for i, pick := range picks {
 		if err := d.postPick(ctx, runID, articles[pick.URL], pick); err != nil {
-			return backend, err
+			return backend, fmt.Errorf("cannot post pick %d of %d: %w", i+1, len(picks), err)
 		}
 	}
 	return backend, nil
@@ -141,12 +150,13 @@ func (d *Digest) postPick(ctx context.Context, runID domain.RunID, a domain.Arti
 	ts, channelID, err := d.poster.Pick(ctx, a, pick)
 	// a ts with an error means the message is in slack and only a reaction failed
 	if err != nil && ts == "" {
-		return err
+		return fmt.Errorf("cannot post article %d: %w", a.ID, err)
 	}
 	if err != nil {
 		log.Ctx(ctx).Warn().Err(err).Msgf("article %d posted as %s %s without its reactions", a.ID, channelID, ts)
 	}
-	postID, err := d.posts.Create(ctx, domain.Post{
+	// the message is in slack: a cancelled job must still store it, or the article is posted again
+	postID, err := d.posts.Create(context.WithoutCancel(ctx), domain.Post{
 		ArticleID: a.ID,
 		RunID:     runID,
 		ChannelID: channelID,
@@ -154,7 +164,7 @@ func (d *Digest) postPick(ctx context.Context, runID domain.RunID, a domain.Arti
 		Pick:      pick,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot store the post of article %d (%s %s): %w", a.ID, channelID, ts, err)
 	}
 	log.Ctx(ctx).Info().Msgf("run %d posted article %d as post %d (%s %s)", runID, a.ID, postID, channelID, ts)
 	return nil
@@ -175,7 +185,7 @@ func (d *Digest) header(kind domain.RunKind, count int) string {
 func (d *Digest) learnedProfile(ctx context.Context, sources []domain.Source) (domain.Profile, error) {
 	current, err := d.profile.Current(ctx)
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
-		return "", err
+		return "", fmt.Errorf("cannot read the interests file: %w", err)
 	}
 	if current.LearnedEmpty() {
 		return d.initProfile(ctx, current, sources), nil
@@ -183,11 +193,11 @@ func (d *Digest) learnedProfile(ctx context.Context, sources []domain.Source) (d
 
 	lastLearnedAt, err := d.profile.LastLearnedAt(ctx)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot read when the interests file was learned: %w", err)
 	}
 	changed, err := d.votes.ChangedSince(ctx, lastLearnedAt)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("cannot check for new votes: %w", err)
 	}
 	if !changed {
 		return current, nil
@@ -202,7 +212,7 @@ func (d *Digest) initProfile(ctx context.Context, current domain.Profile, source
 		for _, src := range sources {
 			titles, err := d.articles.RecentTitles(ctx, src.ID, initTitlesPerBlog)
 			if err != nil {
-				return "", err
+				return "", fmt.Errorf("cannot read recent titles of blog %d: %w", src.ID, err)
 			}
 			summaries = append(summaries, llm.SourceSummary{Source: src, RecentTitles: titles})
 		}
@@ -211,7 +221,7 @@ func (d *Digest) initProfile(ctx context.Context, current domain.Profile, source
 			return "", fmt.Errorf("cannot make the interests file: %w", err)
 		}
 		if err := d.profile.Save(ctx, profile, domain.ProfileInit); err != nil {
-			return backend, err
+			return backend, fmt.Errorf("cannot save the new interests file: %w", err)
 		}
 		learned = profile
 		return backend, nil
@@ -226,14 +236,14 @@ func (d *Digest) updateProfile(ctx context.Context, current domain.Profile) doma
 	if err := d.withRun(ctx, domain.RunKindProfileUpdate, func(domain.RunID) (llm.Backend, error) {
 		votes, err := d.votes.Recent(ctx, updateVotes)
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("cannot read recent votes: %w", err)
 		}
 		profile, backend, err := d.llm.UpdateProfile(ctx, current, votes)
 		if err != nil {
 			return "", fmt.Errorf("cannot update the interests file: %w", err)
 		}
 		if err := d.profile.Save(ctx, profile, domain.ProfileUpdate); err != nil {
-			return backend, err
+			return backend, fmt.Errorf("cannot save the updated interests file: %w", err)
 		}
 		learned = profile
 		return backend, nil
@@ -247,11 +257,14 @@ func (d *Digest) updateProfile(ctx context.Context, current domain.Profile) doma
 func (d *Digest) withRun(ctx context.Context, kind domain.RunKind, work func(domain.RunID) (llm.Backend, error)) error {
 	runID, err := d.runs.Start(ctx, kind)
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot start %s run: %w", kind, err)
 	}
 	backend, workErr := work(runID)
 	if err := d.runs.Finish(ctx, service.FinishData{ID: runID, Kind: kind, Backend: string(backend), Err: workErr}); err != nil {
 		log.Ctx(ctx).Error().Err(err).Msgf("cannot record the end of %s run %d", kind, runID)
 	}
-	return workErr
+	if workErr != nil {
+		return fmt.Errorf("%s run %d failed: %w", kind, runID, workErr)
+	}
+	return nil
 }
