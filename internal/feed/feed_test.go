@@ -96,6 +96,39 @@ func TestFetchCutsExcerptAt500Characters(t *testing.T) {
 	require.Len(t, []rune(items[0].Excerpt), 500)
 }
 
+func TestFetchReadsFeedLargerThanFiveMiB(t *testing.T) {
+	const descriptionBytes = 6 << 20
+	body := fmt.Sprintf(`<?xml version="1.0"?><rss version="2.0"><channel><title>t</title><item>
+<title>Big</title><link>https://example.com/big</link><description>%s</description></item></channel></rss>`,
+		strings.Repeat("a", descriptionBytes))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+
+	items, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Fetch(context.Background(), mustURL(t, srv.URL))
+
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.Equal(t, "Big", items[0].Title)
+}
+
+func TestFetchRefusesFeedLargerThan32MiB(t *testing.T) {
+	const bodyMiB = 33
+	chunk := []byte(strings.Repeat("a", 1<<20))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel><title>t</title><item><description>`))
+		for range bodyMiB {
+			_, _ = w.Write(chunk)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := feed.NewClient(timeout, feed.WithLoopbackAllowed()).Fetch(context.Background(), mustURL(t, srv.URL))
+
+	require.ErrorContains(t, err, "larger than 32 MiB")
+}
+
 func TestFetchTimesOut(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		select {

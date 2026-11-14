@@ -137,7 +137,7 @@ func newestEntries(found map[domain.URL]time.Time, max int) []SitemapEntry {
 func (c *Client) sitemapRoots(ctx context.Context, siteURL domain.URL) []string {
 	base := strings.TrimSuffix(string(origin(siteURL)), "/")
 	robotsURL := domain.URL(fmt.Sprintf("%s/robots.txt", base))
-	body, err := c.get(ctx, robotsURL)
+	body, err := c.get(ctx, robotsURL, maxPageBytes)
 	if err != nil {
 		log.Ctx(ctx).Debug().Err(err).Msgf("no robots.txt for %s", siteURL)
 	}
@@ -160,7 +160,7 @@ func (c *Client) sitemapRoots(ctx context.Context, siteURL domain.URL) []string 
 }
 
 func (c *Client) readSitemap(ctx context.Context, loc string) (sitemapXML, error) {
-	body, err := c.get(ctx, domain.URL(loc))
+	body, err := c.get(ctx, domain.URL(loc), maxFeedBytes)
 	if err != nil {
 		return sitemapXML{}, err
 	}
@@ -209,7 +209,7 @@ func isArticleOf(site *url.URL, page domain.URL) bool {
 
 // ReadArticle reads the title, description and date of an article page: the og tags first, then <title> and the meta description.
 func (c *Client) ReadArticle(ctx context.Context, pageURL domain.URL) (ArticleInfo, error) {
-	body, err := c.get(ctx, pageURL)
+	body, err := c.get(ctx, pageURL, maxPageBytes)
 	if err != nil {
 		return ArticleInfo{}, err
 	}

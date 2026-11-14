@@ -24,7 +24,8 @@ import (
 const (
 	userAgent      = "blogger"
 	maxRedirects   = 5
-	maxBodyBytes   = 5 << 20
+	maxFeedBytes   = 32 << 20
+	maxPageBytes   = 2 << 20
 	maxExcerptRune = 500
 )
 
@@ -145,7 +146,7 @@ func (c *Client) Fetch(ctx context.Context, feedURL domain.URL) ([]Item, error) 
 }
 
 func (c *Client) Resolve(ctx context.Context, pageURL domain.URL) (Info, error) {
-	body, err := c.get(ctx, pageURL)
+	body, err := c.get(ctx, pageURL, maxFeedBytes)
 	if err != nil {
 		return Info{}, err
 	}
@@ -168,7 +169,7 @@ func (c *Client) Resolve(ctx context.Context, pageURL domain.URL) (Info, error) 
 }
 
 func (c *Client) fetchFeed(ctx context.Context, feedURL domain.URL) (*gofeed.Feed, error) {
-	body, err := c.get(ctx, feedURL)
+	body, err := c.get(ctx, feedURL, maxFeedBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +182,8 @@ func (c *Client) fetchFeed(ctx context.Context, feedURL domain.URL) (*gofeed.Fee
 	return parsed, nil
 }
 
-func (c *Client) get(ctx context.Context, target domain.URL) ([]byte, error) {
+// get reads the body of target; a body larger than limit is an error.
+func (c *Client) get(ctx context.Context, target domain.URL, limit int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, string(target), nil)
 	if err != nil {
 		return nil, fmt.Errorf("cannot build request for %s: %w", target, err)
@@ -208,9 +210,12 @@ func (c *Client) get(ctx context.Context, target domain.URL) ([]byte, error) {
 		return nil, fmt.Errorf("cannot get %s: status %d", target, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %s: %w", target, err)
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("cannot read %s: body is larger than %d MiB", target, limit>>20)
 	}
 
 	return body, nil
