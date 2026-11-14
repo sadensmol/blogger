@@ -56,8 +56,20 @@ func ParseURL(raw string) (URL, error) {
 	return URL(u.String()), nil
 }
 
-// WithOriginOf gives u the scheme and host of other: the same article under http or www is one url.
+// SameSiteAs reports whether u and other are on one host, with or without www.
+func (u URL) SameSiteAs(other URL) bool {
+	a, errA := url.Parse(string(u))
+	b, errB := url.Parse(string(other))
+	return errA == nil && errB == nil &&
+		strings.TrimPrefix(strings.ToLower(a.Hostname()), "www.") == strings.TrimPrefix(strings.ToLower(b.Hostname()), "www.")
+}
+
+// WithOriginOf gives u the scheme and host of other when both are on one site: the same article under http or www
+// is one url. A url of another host stays as it is.
 func (u URL) WithOriginOf(other URL) URL {
+	if !u.SameSiteAs(other) {
+		return u
+	}
 	target, err := url.Parse(string(u))
 	if err != nil {
 		return u

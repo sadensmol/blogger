@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	agentUser    = "blogger"
+	browserUser  = "chromium"
 	secretMarker = "local-only-secret"
 	scriptPage   = `<!doctype html><html><head><title>Script blog</title></head><body><main id="list"></main><script>
 for (const slug of ["first", "second", "third"]) {
@@ -31,7 +31,7 @@ for (const slug of ["first", "second", "third"]) {
 </script></body></html>`
 )
 
-// chromium is the browser as serve runs it: as the agent user when the test runs as root.
+// chromium is the browser as serve runs it: as the browser user when the test runs as root.
 func chromium(t *testing.T, allowLoopback bool) *feed.Chromium {
 	t.Helper()
 
@@ -39,7 +39,7 @@ func chromium(t *testing.T, allowLoopback bool) *feed.Chromium {
 	require.NotEmpty(t, bin, "no Chromium or Chrome found")
 	d := feed.ChromiumData{Bin: bin, Home: os.TempDir(), AllowLoopback: allowLoopback}
 	if os.Geteuid() == 0 {
-		u, err := user.Lookup(agentUser)
+		u, err := user.Lookup(browserUser)
 		require.NoError(t, err)
 		uid, err := strconv.ParseUint(u.Uid, 10, 32)
 		require.NoError(t, err)

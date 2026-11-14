@@ -604,8 +604,8 @@ func (s *FetchTestSuite) TestFetchRendersABlogPageWhoseHTMLListsNoArticle() {
 	s.Equal([]domain.URL{domain.URL(s.feeds.URL() + blogPagePath)}, s.renderer.Rendered())
 }
 
-func (s *FetchTestSuite) TestFetchNeverRendersThePageOfABlogWhoseFeedGivesItems() {
-	s.setFeed(feedAPath, s.feeds.URL()+"/posts/one")
+func (s *FetchTestSuite) TestFetchNeverRendersThePageOfABlogWithAFeedThatGivesNoItemsNow() {
+	s.setFeed(feedAPath)
 	_, err := s.sources.Insert(s.Ctx, testsrepository.SourceRow{
 		SiteURL: s.feeds.URL() + blogPagePath,
 		FeedURL: s.feeds.URL() + feedAPath,
@@ -656,4 +656,35 @@ func (s *FetchTestSuite) TestFetchAsksTheAgentOnlyAboutNewUnclearLinks() {
 	_, err = s.articles.FetchAll(s.Ctx)
 	s.Require().NoError(err)
 	s.Len(s.agents.Args(llm.Claude), 2)
+}
+
+func (s *FetchTestSuite) TestFetchKeepsAPageArticleOfAnotherHostAsFound() {
+	otherHost := strings.Replace(s.feeds.URL(), "127.0.0.1", "localhost", 1)
+	id := s.insertPageBlog(blogPagePath)
+	_, err := s.articleRows.Insert(s.Ctx, testsrepository.ArticleRow{SourceID: id, URL: otherHost + "/posts/a", Now: s.Clock.Now()})
+	s.Require().NoError(err)
+	s.setBlogPage(blogPagePath, "", "/blog/one")
+	s.setTitledPages("/blog/one")
+
+	_, err = s.articles.FetchAll(s.Ctx)
+
+	s.Require().NoError(err)
+	s.ElementsMatch([]string{otherHost + "/posts/a", s.feeds.URL() + "/blog/one"}, s.rawStoredURLs(id))
+}
+
+func (s *FetchTestSuite) TestFetchKeepsTheAgentsArticlesAndDropsURLsItWasNotAskedAbout() {
+	id := s.insertPageBlog(newsPagePath)
+	s.setBlogPage(newsPagePath, "", "/posts/x")
+	s.renderer.Set(domain.URL(s.feeds.URL()+newsPagePath), s.blogPage("", "/posts/x"))
+	s.setTitledPages("/posts/x", "/posts/invented")
+	s.agents.Answer(llm.Claude, llm.SkillClassifyLinks, map[string]any{"articles": []string{
+		s.feeds.URL() + "/posts/x", s.feeds.URL() + "/posts/invented", "not a url",
+	}})
+
+	_, err := s.articles.FetchAll(s.Ctx)
+
+	s.Require().NoError(err)
+	s.Equal([]string{"/posts/x"}, s.storedURLs(id))
+	s.Equal(2, s.CountRows("link_verdict"))
+	s.Zero(s.feeds.Requests("/posts/invented"))
 }

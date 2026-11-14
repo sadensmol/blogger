@@ -30,6 +30,7 @@ type Serve struct {
 	JobTimeout     time.Duration `env:"BLOGGER_JOB_TIMEOUT" envDefault:"15m"`
 	AgentDir       string        `env:"BLOGGER_AGENT_DIR" envDefault:"/app/agent"`
 	AgentUser      string        `env:"BLOGGER_AGENT_USER"`
+	BrowserUser    string        `env:"BLOGGER_BROWSER_USER"` // runs Chromium when the bot runs as root
 	JobsDir        string        `env:"BLOGGER_JOBS_DIR"` // empty: the jobs folder in BLOGGER_DATA_DIR
 	ClaudeBin      string        `env:"BLOGGER_CLAUDE_BIN" envDefault:"claude"`
 	CodexBin       string        `env:"BLOGGER_CODEX_BIN" envDefault:"codex"`

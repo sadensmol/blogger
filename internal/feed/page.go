@@ -198,7 +198,7 @@ func hasRel(rel, value string) bool {
 // nextPage takes the rel=next link, else a link to the page numbered one more than target.
 func nextPage(target domain.URL, relNext string, links []domain.PageLink) domain.URL {
 	if relNext != "" {
-		if u, err := domain.ParseURL(resolveReference(target, relNext)); err == nil && sameSite(target, u) {
+		if u, err := domain.ParseURL(resolveReference(target, relNext)); err == nil && target.SameSiteAs(u) {
 			return u
 		}
 	}
@@ -207,7 +207,7 @@ func nextPage(target domain.URL, relNext string, links []domain.PageLink) domain
 		current = 1
 	}
 	for _, link := range links {
-		if n, ok := pageNumber(link.URL); ok && n == current+1 && sameSite(target, link.URL) {
+		if n, ok := pageNumber(link.URL); ok && n == current+1 && target.SameSiteAs(link.URL) {
 			return link.URL
 		}
 	}
@@ -234,13 +234,6 @@ func pageNumber(target domain.URL) (int, bool) {
 	return 0, false
 }
 
-func sameSite(a, b domain.URL) bool {
-	ua, errA := url.Parse(string(a))
-	ub, errB := url.Parse(string(b))
-	return errA == nil && errB == nil &&
-		strings.TrimPrefix(ua.Hostname(), "www.") == strings.TrimPrefix(ub.Hostname(), "www.")
-}
-
 // sortLinks takes as articles the links under the blog's folder. When there are none, it takes the links of a
 // folder above the blog's that the page links at least three times: a topic page can list posts of the whole blog.
 // The other links of the site are unclear. Links to the blog's own page or the folders above it, listings,
@@ -260,7 +253,7 @@ func sortLinks(blogURL domain.URL, links []domain.PageLink) ([]domain.PageLink, 
 	var articles, unclear []domain.PageLink
 	seen := map[domain.URL]bool{}
 	for _, link := range links {
-		if link.URL == "" || seen[link.URL] || !sameSite(blogURL, link.URL) {
+		if link.URL == "" || seen[link.URL] || !blogURL.SameSiteAs(link.URL) {
 			continue
 		}
 		seen[link.URL] = true

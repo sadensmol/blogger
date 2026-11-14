@@ -398,3 +398,15 @@ func (s *SourcesTestSuite) TestImportMovesABlogToTheNewPageOfItsFeed() {
 	s.Require().NoError(err)
 	s.Equal(1, up)
 }
+
+func (s *SourcesTestSuite) TestImportRejectsTwoNewPagesOfOneFeedBeforeApplying() {
+	const otherBlogPath = "/other-blog"
+	s.feeds.Set(otherBlogPath, htmlType, pageHTML)
+	file := fmt.Sprintf("sources:\n  - url: %s%s\n  - url: %s%s\n", s.feeds.URL(), blogPath, s.feeds.URL(), otherBlogPath)
+
+	_, err := s.runCLI(file, "import")
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), "more than once")
+	s.Equal(0, s.CountRows("source"))
+}

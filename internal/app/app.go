@@ -117,15 +117,12 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	log.Ctx(ctx).Info().Msgf("marked %d interrupted runs as failed", interrupted)
 
 	feedOptions := []feed.Option{feed.WithHostDelay(feedHostDelay)}
-	if bin := feed.FindChromium(); bin != "" {
-		log.Ctx(ctx).Info().Msgf("pages that need a browser are rendered by %s", bin)
-		feedOptions = append(feedOptions, feed.WithRenderer(feed.NewChromium(feed.ChromiumData{
-			Bin:        bin,
-			Credential: runAs.Credential,
-			Home:       runAs.Home,
-		})))
-	} else {
-		log.Ctx(ctx).Info().Msg("no Chromium or Chrome found: pages that need a browser are read without one")
+	browser, err := newBrowser(ctx, cfg.BrowserUser, runAs.Name)
+	if err != nil {
+		return err
+	}
+	if browser != nil {
+		feedOptions = append(feedOptions, feed.WithRenderer(browser))
 	}
 	feeds := feed.NewClient(feedTimeout, feedOptions...)
 	sources := service.NewSource(repository.NewSource(db), feeds, time.Now)
@@ -250,4 +247,31 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	}
 	log.Ctx(ctx).Info().Msg("stopped")
 	return listenErr
+}
+
+// newBrowser returns nil when there is no Chromium or Chrome, and when the bot runs as root without a browser user.
+// The browser never runs as root, nor as the agent user, whose home holds the agent logins.
+func newBrowser(ctx context.Context, browserUser, agentUser string) (*feed.Chromium, error) {
+	bin := feed.FindChromium()
+	if bin == "" {
+		log.Ctx(ctx).Info().Msg("no Chromium or Chrome found: pages that need a browser are read without one")
+		return nil, nil
+	}
+	runAs, err := llm.NewRunAs(browserUser, os.Geteuid())
+	if err != nil {
+		return nil, fmt.Errorf("cannot use BLOGGER_BROWSER_USER: %w", err)
+	}
+	if runAs.Credential == nil && os.Geteuid() == 0 {
+		log.Ctx(ctx).Warn().Msg("BLOGGER_BROWSER_USER is not set: pages that need a browser are read without one, it never runs as root")
+		return nil, nil
+	}
+	if runAs.Credential != nil && runAs.Name == agentUser {
+		return nil, fmt.Errorf("cannot use BLOGGER_BROWSER_USER %q: it is the agent user", browserUser)
+	}
+	log.Ctx(ctx).Info().Msgf("pages that need a browser are rendered by %s as %s", bin, runAs.Name)
+	return feed.NewChromium(feed.ChromiumData{
+		Bin:        bin,
+		Credential: runAs.Credential,
+		Home:       runAs.Home,
+	}), nil
 }

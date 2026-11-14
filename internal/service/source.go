@@ -207,6 +207,7 @@ func (s *Source) Diff(ctx context.Context, wanted []domain.SourceSpec) (domain.S
 	var diff domain.SourcesDiff
 	kept := make(map[domain.SourceID]bool, len(wanted))
 	added := make(map[domain.URL]bool, len(wanted))
+	addedFeeds := make(map[domain.URL]bool, len(wanted))
 	for _, spec := range wanted {
 		var before domain.Source
 		exists := false
@@ -235,7 +236,11 @@ func (s *Source) Diff(ctx context.Context, wanted []domain.SourceSpec) (domain.S
 			if added[spec.URL] {
 				return domain.SourcesDiff{}, fmt.Errorf("cannot import: blog %s is listed more than once", spec.URL)
 			}
+			if spec.FeedURL != "" && addedFeeds[spec.FeedURL] {
+				return domain.SourcesDiff{}, fmt.Errorf("cannot import: feed %s is listed more than once", spec.FeedURL)
+			}
 			added[spec.URL] = true
+			addedFeeds[spec.FeedURL] = true
 			diff.Add = append(diff.Add, newSourceFromSpec(spec, fallbackTitle))
 			continue
 		}

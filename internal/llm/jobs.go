@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/rs/zerolog/log"
+
 	"github.com/sadensmol/blogger/internal/domain"
 )
 
@@ -339,6 +341,7 @@ type classifyAnswer struct {
 }
 
 // ClassifyLinks asks which links of a blog page are articles. It maps each link it asked about to the answer.
+// An answered url that is not one of the links is dropped.
 func (r *Runner) ClassifyLinks(ctx context.Context, blogURL domain.URL, links []domain.PageLink) (map[domain.URL]bool, Backend, error) {
 	links = links[:min(len(links), maxClassifiedLinks)]
 	linksJSON := make([]linkJSON, 0, len(links))
@@ -360,15 +363,18 @@ func (r *Runner) ClassifyLinks(ctx context.Context, blogURL domain.URL, links []
 		for _, link := range links {
 			answered[link.URL] = false
 		}
+		var unknown []string
 		for _, raw := range answer.Articles {
 			u, err := domain.ParseURL(raw)
-			if err != nil {
-				return fmt.Errorf("bad article url: %w", err)
-			}
-			if _, asked := answered[u]; !asked {
-				return fmt.Errorf("article url %s is not one of the links", u)
+			if _, asked := answered[u]; err != nil || !asked {
+				unknown = append(unknown, raw)
+				continue
 			}
 			answered[u] = true
+		}
+		if len(unknown) > 0 {
+			log.Ctx(ctx).Warn().Msgf("%s answer for %s names %d urls that are not its links, they are dropped: %q",
+				SkillClassifyLinks, blogURL, len(unknown), unknown)
 		}
 		verdicts = answered
 		return nil

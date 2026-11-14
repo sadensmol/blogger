@@ -233,7 +233,7 @@ func (a *Articles) fetchFeeds(ctx context.Context, sources []domain.Source) int 
 
 // fetchSource reads the blog's feed and its page. A blog fails only when nothing of it can be read:
 // its feed, or its page when it has no feed.
-// The browser and the agent help only a blog whose feed gives nothing: the feed knows the articles already.
+// The browser and the agent help only a blog without a feed: a feed that gives nothing now is a passing fault.
 func (a *Articles) fetchSource(ctx context.Context, src domain.Source) (int, error) {
 	origin, err := a.repo.FindLatestURLBySource(ctx, src.ID)
 	if err != nil {
@@ -243,14 +243,13 @@ func (a *Articles) fetchSource(ctx context.Context, src domain.Source) (int, err
 		origin = src.SiteURL
 	}
 
-	created, fromFeed := 0, 0
+	created := 0
 	var feedErr error
 	if src.HasFeed() {
 		items, err := a.feeds.Fetch(ctx, src.FeedURL)
 		if err != nil {
 			feedErr = fmt.Errorf("cannot read feed %s: %w", src.FeedURL, err)
 		}
-		fromFeed = len(items)
 		for _, item := range items {
 			isNew, err := a.store(ctx, src.ID, item)
 			if err != nil {
@@ -262,7 +261,7 @@ func (a *Articles) fetchSource(ctx context.Context, src domain.Source) (int, err
 		}
 	}
 
-	fromPage, pageErr := a.fetchPage(ctx, src, origin, fromFeed == 0)
+	fromPage, pageErr := a.fetchPage(ctx, src, origin, !src.HasFeed())
 	switch {
 	case pageErr != nil && !src.HasFeed():
 		return created + fromPage, pageErr

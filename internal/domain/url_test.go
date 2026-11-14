@@ -43,6 +43,8 @@ func TestURLWithOriginOf(t *testing.T) {
 	}{
 		{"https://www.example.com/a?x=1", "https://example.com/b", "https://example.com/a?x=1"},
 		{"http://example.com/a", "https://www.example.com/", "https://www.example.com/a"},
+		{"https://www.x.com/blog/one", "https://blog.x.com/posts/a", "https://www.x.com/blog/one"},
+		{"https://blog.x.com/posts/a", "https://www.x.com/blog/one", "https://blog.x.com/posts/a"},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.url), func(t *testing.T) {

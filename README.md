@@ -7,7 +7,7 @@ Blogger is a Slack bot for one reader. It reads the blogs you follow and posts a
 ## 1. How the parts fit
 
 - **Bot.** One Go program (`blogger serve`). Every few hours it reads each blog: its feed, when it has one, and the blog page that lists its posts. It keeps everything in one SQLite file and posts to one Slack channel.
-- **Headless Chromium (in the image).** When the plain HTML of a blog page lists no article, the bot renders the page in Chromium. Every request of the browser goes through the bot, which allows only public addresses. On a local run the bot uses Chromium or Chrome when it finds one, else it skips this step.
+- **Headless Chromium (in the image).** When the plain HTML of the page of a blog without a feed lists no article, the bot renders the page in Chromium. Chromium runs as its own user (`BLOGGER_BROWSER_USER`, `chromium` in the image), never as root or the agent user. Every request of the browser goes through the bot, which allows only public addresses. On a local run the bot uses Chromium or Chrome when it finds one, else it skips this step.
 - **LLM CLIs.** The bot does not call an LLM API. It starts the official `claude` CLI (your Claude subscription) or the `codex` CLI (your ChatGPT login) to pick articles, learn from votes and find new blogs. When one fails, it tries the next one. An optional local model runs through Codex and Ollama.
 - **Slack Socket Mode.** The bot opens an outgoing connection to Slack. It needs no public URL, no open port and no web server.
 - **SQLite.** Blogs, articles, posts and votes live in one file in the data folder.
