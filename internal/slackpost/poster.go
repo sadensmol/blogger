@@ -74,6 +74,15 @@ func NotPosted(err error) bool {
 	return errors.As(err, &apiErr) || errors.As(err, &rateErr)
 }
 
+// ErrorCode returns the code of a call that slack rejected, such as not_in_channel; it is empty for any other error.
+func ErrorCode(err error) string {
+	var apiErr slack.SlackErrorResponse
+	if errors.As(err, &apiErr) {
+		return apiErr.Err
+	}
+	return ""
+}
+
 func (p *Poster) Reply(ctx context.Context, responseURL, text string) error {
 	msg := &slack.WebhookMessage{ResponseType: slack.ResponseTypeEphemeral, Text: text}
 	if err := slack.PostWebhookCustomHTTPContext(ctx, responseURL, p.http, msg); err != nil {

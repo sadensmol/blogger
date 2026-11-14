@@ -11,10 +11,11 @@ import (
 type PickInput struct {
 	Candidates []domain.Article
 	Profile    domain.Profile
-	Max        int
+	Count      domain.PickCount
 }
 
 type pickJobInput struct {
+	Min         int             `json:"min"`
 	Max         int             `json:"max"`
 	InterestsMD string          `json:"interests_md"`
 	Candidates  []candidateJSON `json:"candidates"`
@@ -31,13 +32,16 @@ type candidateJSON struct {
 type domainArticle domain.Article
 
 func (a domainArticle) toCandidateJSON() candidateJSON {
-	return candidateJSON{
-		URL:       string(a.URL),
-		Title:     a.Title,
-		Source:    a.SourceTitle,
-		Published: a.PublishedAt.UTC().Format(time.RFC3339),
-		Excerpt:   a.Excerpt,
+	candidate := candidateJSON{
+		URL:     string(a.URL),
+		Title:   a.Title,
+		Source:  a.SourceTitle,
+		Excerpt: a.Excerpt,
 	}
+	if !a.PublishedAt.IsZero() {
+		candidate.Published = a.PublishedAt.UTC().Format(time.RFC3339)
+	}
+	return candidate
 }
 
 type pickAnswer struct {
@@ -66,7 +70,7 @@ func (r *Runner) PickArticles(ctx context.Context, in PickInput) ([]domain.Pick,
 	}
 	req := jobRequest{
 		skill: SkillPickArticles,
-		input: pickJobInput{Max: in.Max, InterestsMD: string(in.Profile), Candidates: candidates},
+		input: pickJobInput{Min: in.Count.Min, Max: in.Count.Max, InterestsMD: string(in.Profile), Candidates: candidates},
 	}
 
 	var picks []domain.Pick
@@ -83,7 +87,7 @@ func (r *Runner) PickArticles(ctx context.Context, in PickInput) ([]domain.Pick,
 			}
 			answered = append(answered, pick)
 		}
-		if err := domain.ValidatePicks(answered, in.Candidates, in.Max); err != nil {
+		if err := domain.ValidatePicks(answered, in.Candidates, in.Count); err != nil {
 			return err
 		}
 		picks = answered

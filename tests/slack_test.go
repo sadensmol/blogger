@@ -202,6 +202,18 @@ func (s *SlackTestSuite) TestShowWhileDigestQueuedSaysOnItsWay() {
 	s.Equal(1, s.runsOf(domain.RunKindDigestShow))
 }
 
+func (s *SlackTestSuite) TestShowThatCannotPostRepliesWhyThroughResponseURL() {
+	s.insertBlogWithArticle()
+	s.slack.PostFaults = []tests.PostFault{tests.PostNotInChannel}
+
+	text := s.ack(s.ownerCommand("/show", ""))
+
+	s.Equal(slackPicking, text)
+	s.Eventually(func() bool { return len(s.slack.Replies()) > 0 }, slackWait, slackPoll)
+	s.Contains(s.slack.Replies()[0], "the bot is not in this channel")
+	s.Empty(s.slack.Posted())
+}
+
 func (s *SlackTestSuite) TestShowOutsideChannelIsRefused() {
 	cmd := s.ownerCommand("/show", "")
 	cmd.ChannelID = "C2"

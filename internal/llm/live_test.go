@@ -58,12 +58,30 @@ func TestLivePickArticles(t *testing.T) {
 			picks, used, err := liveRunner(t, backend).PickArticles(context.Background(), llm.PickInput{
 				Candidates: liveCandidates(),
 				Profile:    LiveProfile,
-				Max:        2,
+				Count:      domain.PickCount{Max: 2},
 			})
 
 			require.NoError(t, err)
 			require.Equal(t, backend, used)
 			require.LessOrEqual(t, len(picks), 2)
+			t.Logf("picks: %+v", picks)
+		})
+	}
+}
+
+func TestLivePickArticlesForShowReturnsOneEvenWhenNothingFits(t *testing.T) {
+	offTopic := liveCandidates()[2:]
+	for _, backend := range liveBackends {
+		t.Run(string(backend), func(t *testing.T) {
+			picks, used, err := liveRunner(t, backend).PickArticles(context.Background(), llm.PickInput{
+				Candidates: offTopic,
+				Profile:    LiveProfile,
+				Count:      domain.PickCount{Min: 1, Max: 2},
+			})
+
+			require.NoError(t, err)
+			require.Equal(t, backend, used)
+			require.NotEmpty(t, picks)
 			t.Logf("picks: %+v", picks)
 		})
 	}

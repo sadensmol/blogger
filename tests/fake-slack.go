@@ -15,6 +15,7 @@ const (
 	PostOK PostFault = iota
 	PostRejected // slack answers ok:false and posts nothing
 	PostDropped  // slack posts the message, then the connection drops before the answer
+	PostNotInChannel // slack answers not_in_channel: the bot is not a member of the channel
 )
 
 type FakeSlack struct {
@@ -87,6 +88,10 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		f.postCalls++
 		if fault == PostRejected {
 			fmt.Fprint(w, `{"ok":false,"error":"channel_not_found"}`)
+			return
+		}
+		if fault == PostNotInChannel {
+			fmt.Fprint(w, `{"ok":false,"error":"not_in_channel"}`)
 			return
 		}
 		f.counter++

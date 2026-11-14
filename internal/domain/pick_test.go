@@ -10,7 +10,7 @@ import (
 )
 
 func TestValidatePicks(t *testing.T) {
-	const max = 5
+	count := domain.PickCount{Max: 5}
 	candidates := []domain.Article{
 		{URL: "https://a.example.com/1"}, {URL: "https://a.example.com/2"}, {URL: "https://b.example.com/1"},
 	}
@@ -18,18 +18,26 @@ func TestValidatePicks(t *testing.T) {
 
 	t.Run("valid", func(t *testing.T) {
 		require.NoError(t, domain.ValidatePicks(
-			[]domain.Pick{pick("https://a.example.com/1"), pick("https://b.example.com/1")}, candidates, max))
+			[]domain.Pick{pick("https://a.example.com/1"), pick("https://b.example.com/1")}, candidates, count))
 	})
 	t.Run("zero picks", func(t *testing.T) {
-		require.NoError(t, domain.ValidatePicks(nil, candidates, max))
+		require.NoError(t, domain.ValidatePicks(nil, candidates, count))
+	})
+	t.Run("zero picks when at least one is required", func(t *testing.T) {
+		err := domain.ValidatePicks(nil, candidates, domain.PickCount{Min: 1, Max: 5})
+		require.ErrorIs(t, err, domain.ErrBadOutput)
+	})
+	t.Run("one pick when at least one is required", func(t *testing.T) {
+		err := domain.ValidatePicks([]domain.Pick{pick("https://a.example.com/1")}, candidates, domain.PickCount{Min: 1, Max: 5})
+		require.NoError(t, err)
 	})
 	t.Run("unknown url", func(t *testing.T) {
-		err := domain.ValidatePicks([]domain.Pick{pick("https://x.example.com/1")}, candidates, max)
+		err := domain.ValidatePicks([]domain.Pick{pick("https://x.example.com/1")}, candidates, count)
 		require.ErrorIs(t, err, domain.ErrBadOutput)
 	})
 	t.Run("duplicate url", func(t *testing.T) {
 		err := domain.ValidatePicks(
-			[]domain.Pick{pick("https://a.example.com/1"), pick("https://a.example.com/1")}, candidates, max)
+			[]domain.Pick{pick("https://a.example.com/1"), pick("https://a.example.com/1")}, candidates, count)
 		require.ErrorIs(t, err, domain.ErrBadOutput)
 	})
 	t.Run("too many picks", func(t *testing.T) {
@@ -37,18 +45,18 @@ func TestValidatePicks(t *testing.T) {
 		for i := range picks {
 			picks[i] = pick("https://a.example.com/1")
 		}
-		require.ErrorIs(t, domain.ValidatePicks(picks, candidates, max), domain.ErrBadOutput)
+		require.ErrorIs(t, domain.ValidatePicks(picks, candidates, count), domain.ErrBadOutput)
 	})
 	t.Run("empty description", func(t *testing.T) {
-		err := domain.ValidatePicks([]domain.Pick{{URL: "https://a.example.com/1"}}, candidates, max)
+		err := domain.ValidatePicks([]domain.Pick{{URL: "https://a.example.com/1"}}, candidates, count)
 		require.ErrorIs(t, err, domain.ErrBadOutput)
 	})
 	t.Run("description over 300 characters", func(t *testing.T) {
 		long := domain.Pick{URL: "https://a.example.com/1", Description: strings.Repeat("я", 301)}
-		require.ErrorIs(t, domain.ValidatePicks([]domain.Pick{long}, candidates, max), domain.ErrBadOutput)
+		require.ErrorIs(t, domain.ValidatePicks([]domain.Pick{long}, candidates, count), domain.ErrBadOutput)
 	})
 	t.Run("description of 300 characters", func(t *testing.T) {
 		ok := domain.Pick{URL: "https://a.example.com/1", Description: strings.Repeat("я", 300)}
-		require.NoError(t, domain.ValidatePicks([]domain.Pick{ok}, candidates, max))
+		require.NoError(t, domain.ValidatePicks([]domain.Pick{ok}, candidates, count))
 	})
 }

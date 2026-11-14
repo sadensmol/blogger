@@ -46,6 +46,16 @@ type Source struct {
 	StatusChangedAt  time.Time
 	Votes            Votes // all time, for lists
 	VotesSinceStatus Votes // since StatusChangedAt, for the status rule
+	FetchedAt        time.Time // the last read of the feed that worked
+	BackfilledAt     time.Time // when the older articles were collected once
+}
+
+func (s Source) NeverFetched() bool {
+	return s.FetchedAt.IsZero()
+}
+
+func (s Source) Backfilled() bool {
+	return !s.BackfilledAt.IsZero()
 }
 
 func (s Source) StatusAfterVotes() SourceStatus {

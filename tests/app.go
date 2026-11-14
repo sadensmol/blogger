@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	appTimeout   = 5 * time.Second
-	agentTimeout = 10 * time.Second
+	appTimeout    = 5 * time.Second
+	agentTimeout  = 10 * time.Second
+	HistoryWindow = 365 * 24 * time.Hour
 )
 
 type AppData struct {
@@ -64,6 +65,7 @@ func NewApp(t *testing.T, d AppData) *App {
 		Repo:    repository.NewArticle(d.DB),
 		Feeds:   feeds,
 		Runs:    runs,
+		History: HistoryWindow,
 		Now:     d.Now,
 	})
 	backends, err := llm.NewBackends(llm.Config{

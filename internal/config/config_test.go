@@ -27,6 +27,7 @@ func TestLoadServeDefaults(t *testing.T) {
 	require.Equal(t, 5, cfg.DigestSize)
 	require.Equal(t, "claude,codex,codex-oss", cfg.Backends)
 	require.Equal(t, 3*time.Hour, cfg.FetchEvery)
+	require.Equal(t, 365, cfg.HistoryDays)
 	require.Equal(t, "10:00", cfg.DigestTime)
 	require.Equal(t, "Asia/Tbilisi", cfg.TimeZone)
 	require.Equal(t, "/data", cfg.DataDir)
@@ -47,6 +48,7 @@ func TestLoadServeWithBadValuesFails(t *testing.T) {
 	}{
 		{name: "zero job timeout", key: "BLOGGER_JOB_TIMEOUT", value: "0s"},
 		{name: "zero digest size", key: "BLOGGER_DIGEST_SIZE", value: "0"},
+		{name: "zero history days", key: "BLOGGER_HISTORY_DAYS", value: "0"},
 		{name: "blank claude binary", key: "BLOGGER_CLAUDE_BIN", value: " "},
 		{name: "blank codex binary", key: "BLOGGER_CODEX_BIN", value: " "},
 	}

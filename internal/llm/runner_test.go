@@ -127,7 +127,7 @@ func pickInput() llm.PickInput {
 			{ID: 2, SourceID: 1, SourceTitle: "Example", URL: URLB, Title: "B", PublishedAt: time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)},
 		},
 		Profile: CurrentProfile,
-		Max:     5,
+		Count:   domain.PickCount{Max: 5},
 	}
 }
 
@@ -208,6 +208,20 @@ func TestFallsBackWhenPickURLNotInCandidates(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, llm.Codex, backend)
+}
+
+func TestFallsBackWhenPicksAreBelowMin(t *testing.T) {
+	f := newFakeAgents(t, llm.Claude, llm.Codex)
+	f.answer("claude", llm.SkillPickArticles, picksAnswer())
+	f.answer("codex", llm.SkillPickArticles, picksAnswer(URLA))
+	in := pickInput()
+	in.Count.Min = 1
+
+	picks, backend, err := f.runner().PickArticles(context.Background(), in)
+
+	require.NoError(t, err)
+	require.Equal(t, llm.Codex, backend)
+	require.Equal(t, []domain.URL{URLA}, pickURLs(picks))
 }
 
 func TestFallsBackOnTimeout(t *testing.T) {

@@ -36,6 +36,7 @@ const (
 	slackTimeout      = 30 * time.Second
 	workerStopWait    = 20 * time.Second
 	feedTimeout = 20 * time.Second
+	feedHostDelay     = 500 * time.Millisecond
 )
 
 func SourcesCLI(ctx context.Context, cfg config.Store, args []string) error {
@@ -115,7 +116,7 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	}
 	log.Ctx(ctx).Info().Msgf("marked %d interrupted runs as failed", interrupted)
 
-	feeds := feed.NewClient(feedTimeout)
+	feeds := feed.NewClient(feedTimeout, feed.WithHostDelay(feedHostDelay))
 	sources := service.NewSource(repository.NewSource(db), feeds, time.Now)
 	posts := service.NewPosts(repository.NewPost(db), time.Now)
 	votes := service.NewVotes(service.VotesData{
@@ -129,6 +130,7 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 		Repo:    repository.NewArticle(db),
 		Feeds:   feeds,
 		Runs:    runs,
+		History: time.Duration(cfg.HistoryDays) * 24 * time.Hour,
 		Now:     time.Now,
 	})
 

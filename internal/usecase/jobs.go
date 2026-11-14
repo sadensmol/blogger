@@ -17,6 +17,11 @@ const (
 	JobDiscovery     JobKind = "discovery"
 )
 
+type Job struct {
+	Kind     JobKind
+	ReplyURL string // the response url of the slash command that asked for the job
+}
+
 type SubmitResult string
 
 const (
@@ -34,7 +39,7 @@ type JobsData struct {
 type Jobs struct {
 	digest    *Digest
 	discovery *Discovery
-	queue     chan JobKind
+	queue     chan Job
 
 	mu      sync.Mutex
 	waiting map[JobKind]struct{}
@@ -44,25 +49,25 @@ func NewJobs(d JobsData) *Jobs {
 	return &Jobs{
 		digest:    d.Digest,
 		discovery: d.Discovery,
-		queue:     make(chan JobKind, d.Size),
+		queue:     make(chan Job, d.Size),
 		waiting:   map[JobKind]struct{}{},
 	}
 }
 
 // Submit never blocks: a kind that waits or runs is merged, a full queue answers Busy.
-func (j *Jobs) Submit(kind JobKind) SubmitResult {
+func (j *Jobs) Submit(job Job) SubmitResult {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
-	if _, ok := j.waiting[kind]; ok {
+	if _, ok := j.waiting[job.Kind]; ok {
 		return AlreadyQueued
 	}
 	select {
-	case j.queue <- kind:
-		j.waiting[kind] = struct{}{}
+	case j.queue <- job:
+		j.waiting[job.Kind] = struct{}{}
 		return Queued
 	default:
-		log.Warn().Msgf("job queue is full: %s refused", kind)
+		log.Warn().Msgf("job queue is full: %s refused", job.Kind)
 		return Busy
 	}
 }
@@ -73,37 +78,37 @@ func (j *Jobs) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case kind := <-j.queue:
+		case job := <-j.queue:
 			// select picks at random when both are ready: a stopped worker starts no new job
 			if ctx.Err() != nil {
-				j.forget(kind)
+				j.forget(job.Kind)
 				return
 			}
-			j.execute(ctx, kind)
+			j.execute(ctx, job)
 		}
 	}
 }
 
 // execute lets a started job finish after ctx ends: it must not kill its agent halfway.
-func (j *Jobs) execute(ctx context.Context, kind JobKind) {
+func (j *Jobs) execute(ctx context.Context, job Job) {
 	jobCtx := context.WithoutCancel(ctx)
-	defer j.forget(kind)
+	defer j.forget(job.Kind)
 	defer func() {
 		if r := recover(); r != nil {
-			log.Ctx(jobCtx).Error().Msgf("job %s panicked: %v", kind, r)
+			log.Ctx(jobCtx).Error().Msgf("job %s panicked: %v", job.Kind, r)
 		}
 	}()
 	var err error
-	switch kind {
+	switch job.Kind {
 	case JobMorningDigest:
 		err = j.digest.Run(jobCtx, domain.RunKindDigestMorning)
 	case JobShowDigest:
-		err = j.digest.Run(jobCtx, domain.RunKindDigestShow)
+		err = j.digest.Show(jobCtx, job.ReplyURL)
 	case JobDiscovery:
 		_, err = j.discovery.Run(jobCtx)
 	}
 	if err != nil {
-		log.Ctx(jobCtx).Error().Err(err).Msgf("job %s failed", kind)
+		log.Ctx(jobCtx).Error().Err(err).Msgf("job %s failed", job.Kind)
 	}
 }
 

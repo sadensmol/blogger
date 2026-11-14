@@ -1,14 +1,19 @@
 package tests_test
 
 import (
+	"database/sql"
 	"errors"
+	"io/fs"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/suite"
 	"modernc.org/sqlite"
 	sqlite3 "modernc.org/sqlite/lib"
 
+	blogdb "github.com/sadensmol/blogger/db"
 	"github.com/sadensmol/blogger/internal/domain"
 	"github.com/sadensmol/blogger/internal/repository"
 	"github.com/sadensmol/blogger/tests"
@@ -16,7 +21,7 @@ import (
 )
 
 const (
-	migrationsCount = 7
+	migrationsCount = 9
 	feedURL         = "https://example.com/feed"
 	unknownSourceID = 999
 	userOne         = "U1"
@@ -90,6 +95,41 @@ func (s *StoreTestSuite) TestOpenTwiceAppliesNothing() {
 	var version int
 	s.Require().NoError(s.DB.QueryRowContext(s.Ctx, `SELECT MAX(version_id) FROM goose_db_version`).Scan(&version))
 	s.Equal(migrationsCount, version)
+}
+
+func (s *StoreTestSuite) TestOptionalPublishedMigrationForgetsFetchTimeDates() {
+	const lastVersionWithRequiredDate = 8
+	path := filepath.Join(s.T().TempDir(), "old.db")
+	old, err := sql.Open("sqlite", path)
+	s.Require().NoError(err)
+	migrations, err := fs.Sub(blogdb.Migrations, "migrations")
+	s.Require().NoError(err)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, old, migrations)
+	s.Require().NoError(err)
+	_, err = provider.UpTo(s.Ctx, lastVersionWithRequiredDate)
+	s.Require().NoError(err)
+	sourceID, err := testsrepository.NewSource(old).Insert(s.Ctx, testsrepository.SourceRow{FeedURL: feedURL, Status: string(domain.SourceActive)}, s.Clock.Now())
+	s.Require().NoError(err)
+	realDate := s.Clock.Now().Add(-24 * time.Hour)
+	for _, row := range []testsrepository.ArticleRow{
+		{SourceID: sourceID, URL: "https://example.com/fetch-time", PublishedAt: s.Clock.Now(), Now: s.Clock.Now()},
+		{SourceID: sourceID, URL: "https://example.com/real-date", PublishedAt: realDate, Now: s.Clock.Now()},
+	} {
+		_, err := testsrepository.NewArticle(old).Insert(s.Ctx, row)
+		s.Require().NoError(err)
+	}
+	s.Require().NoError(old.Close())
+
+	migrated, err := repository.Open(s.Ctx, path)
+	s.Require().NoError(err)
+	defer func() { s.Require().NoError(migrated.Close()) }()
+
+	stored, err := testsrepository.NewArticle(migrated).ListBySource(s.Ctx, sourceID)
+	s.Require().NoError(err)
+	s.Equal([]testsrepository.StoredArticle{
+		{URL: "https://example.com/real-date", Title: "https://example.com/real-date", PublishedAt: sql.NullString{String: realDate.Format(time.RFC3339), Valid: true}},
+		{URL: "https://example.com/fetch-time", Title: "https://example.com/fetch-time"},
+	}, stored)
 }
 
 func (s *StoreTestSuite) TestForeignKeysAreOn() {

@@ -117,8 +117,8 @@ func (s *JobsTestSuite) okRuns(kind domain.RunKind) int {
 
 func (s *JobsTestSuite) TestJobsRunOneAtATime() {
 	s.agents.Sleep(llm.Claude, 1)
-	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobShowDigest))
-	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobDiscovery))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.Job{Kind: usecase.JobDiscovery}))
 
 	s.startWorker()
 
@@ -130,8 +130,8 @@ func (s *JobsTestSuite) TestJobsRunOneAtATime() {
 }
 
 func (s *JobsTestSuite) TestSubmitSameKindWhileWaitingOrRunningIsMerged() {
-	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobShowDigest))
-	s.Equal(usecase.AlreadyQueued, s.jobs.Submit(usecase.JobShowDigest))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}))
+	s.Equal(usecase.AlreadyQueued, s.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}))
 
 	s.startWorker()
 
@@ -141,32 +141,32 @@ func (s *JobsTestSuite) TestSubmitSameKindWhileWaitingOrRunningIsMerged() {
 
 func (s *JobsTestSuite) TestSubmitSameKindWhileRunningIsMerged() {
 	s.agents.Sleep(llm.Claude, 1)
-	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobShowDigest))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}))
 	s.startWorker()
 	s.Eventually(func() bool { return len(s.agents.Args(llm.Claude)) > 0 }, jobsWaitTimeout, jobsTick)
 
-	s.Equal(usecase.AlreadyQueued, s.jobs.Submit(usecase.JobShowDigest))
+	s.Equal(usecase.AlreadyQueued, s.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}))
 }
 
 func (s *JobsTestSuite) TestSubmitAfterFinishQueuesAgain() {
-	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobShowDigest))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}))
 	s.startWorker()
 	s.Eventually(func() bool { return s.runStatus(domain.RunKindDigestShow) == string(domain.RunStatusOK) }, jobsWaitTimeout, jobsTick)
 
-	s.Eventually(func() bool { return s.jobs.Submit(usecase.JobShowDigest) == usecase.Queued }, jobsWaitTimeout, jobsTick)
+	s.Eventually(func() bool { return s.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}) == usecase.Queued }, jobsWaitTimeout, jobsTick)
 	s.Eventually(func() bool { return s.okRuns(domain.RunKindDigestShow) == 2 }, jobsWaitTimeout, jobsTick)
 }
 
 func (s *JobsTestSuite) TestFullQueueAnswersBusy() {
 	jobs := usecase.NewJobs(s.jobsData(1))
 
-	s.Equal(usecase.Queued, jobs.Submit(usecase.JobShowDigest))
-	s.Equal(usecase.Busy, jobs.Submit(usecase.JobDiscovery))
+	s.Equal(usecase.Queued, jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}))
+	s.Equal(usecase.Busy, jobs.Submit(usecase.Job{Kind: usecase.JobDiscovery}))
 }
 
 func (s *JobsTestSuite) TestWorkerStopsAfterCancel() {
 	s.agents.Sleep(llm.Claude, 1)
-	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobShowDigest))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}))
 	cancel, stopped := s.startWorker()
 	s.Eventually(func() bool { return len(s.agents.Args(llm.Claude)) > 0 }, jobsWaitTimeout, jobsTick)
 
@@ -182,8 +182,8 @@ func (s *JobsTestSuite) TestWorkerStopsAfterCancel() {
 
 func (s *JobsTestSuite) TestStoppedWorkerStartsNoQueuedJob() {
 	s.agents.Sleep(llm.Claude, 1)
-	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobShowDigest))
-	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobDiscovery))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.Job{Kind: usecase.JobDiscovery}))
 	cancel, stopped := s.startWorker()
 	s.Eventually(func() bool { return len(s.agents.Args(llm.Claude)) > 0 }, jobsWaitTimeout, jobsTick)
 
@@ -202,11 +202,11 @@ func (s *JobsTestSuite) TestWorkerSurvivesPanickingJob() {
 	data := s.jobsData(jobsQueueSize)
 	data.Digest = nil
 	s.jobs = usecase.NewJobs(data)
-	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobShowDigest))
-	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobDiscovery))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.Job{Kind: usecase.JobDiscovery}))
 
 	s.startWorker()
 
 	s.Eventually(func() bool { return s.runStatus(domain.RunKindDiscovery) == string(domain.RunStatusOK) }, jobsWaitTimeout, jobsTick)
-	s.Eventually(func() bool { return s.jobs.Submit(usecase.JobShowDigest) == usecase.Queued }, jobsWaitTimeout, jobsTick)
+	s.Eventually(func() bool { return s.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest}) == usecase.Queued }, jobsWaitTimeout, jobsTick)
 }

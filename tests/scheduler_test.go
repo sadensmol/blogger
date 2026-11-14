@@ -52,7 +52,7 @@ func (s *SchedulerTestSuite) SetupTest() {
 	s.location, err = time.LoadLocation(schedulerZone)
 	s.Require().NoError(err)
 
-	s.feeds.Set(schedulerFeedPath, "application/rss+xml", fmt.Sprintf(itemsFmt, fmt.Sprintf(itemFmt, schedulerArticle, s.articleURL())))
+	s.feeds.Set(schedulerFeedPath, "application/rss+xml", fmt.Sprintf(itemsFmt, fmt.Sprintf(datedItemFmt, schedulerArticle, s.articleURL(), s.Clock.Now().Format(time.RFC1123Z))))
 	_, err = testsrepository.NewSource(s.DB).Insert(s.Ctx, testsrepository.SourceRow{
 		FeedURL: fmt.Sprintf("%s%s", s.feeds.URL(), schedulerFeedPath),
 		Status:  string(domain.SourceActive),

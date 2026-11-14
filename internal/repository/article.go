@@ -22,13 +22,13 @@ type articleRow struct {
 	sourceTitle   string
 	url, title    string
 	excerpt       string
-	publishedAt   string
+	publishedAt   sql.NullString
 }
 
 type repositoryArticle articleRow
 
 func (r repositoryArticle) toDomain() (domain.Article, error) {
-	publishedAt, err := parseTime(r.publishedAt)
+	publishedAt, err := parseOptionalTime(r.publishedAt)
 	if err != nil {
 		return domain.Article{}, fmt.Errorf("cannot map article %d: %w", r.id, err)
 	}
@@ -48,7 +48,7 @@ func (r *Article) CreateIgnoringDuplicate(ctx context.Context, a domain.Article,
 INSERT INTO article (source_id, url, title, excerpt, published_at, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (url) DO NOTHING`,
-		a.SourceID, a.URL, a.Title, a.Excerpt, formatTime(a.PublishedAt), formatTime(now), formatTime(now))
+		a.SourceID, a.URL, a.Title, a.Excerpt, formatOptionalTime(a.PublishedAt), formatTime(now), formatTime(now))
 	if err != nil {
 		return false, fmt.Errorf("cannot create article %s: %w", a.URL, err)
 	}
@@ -59,16 +59,50 @@ ON CONFLICT (url) DO NOTHING`,
 	return n == 1, nil
 }
 
-func (r *Article) ListNotPostedOfActiveOrTrialPublishedAfter(ctx context.Context, after time.Time) ([]domain.Article, error) {
-	rows, err := r.db.QueryContext(ctx, `
+func (r *Article) ExistsByURL(ctx context.Context, u domain.URL) (bool, error) {
+	var exists bool
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM article WHERE url = ?)`, u).Scan(&exists); err != nil {
+		return false, fmt.Errorf("cannot check article %s: %w", u, err)
+	}
+	return exists, nil
+}
+
+func (r *Article) UpdateUndatedPublishedAt(ctx context.Context, u domain.URL, publishedAt, now time.Time) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE article SET published_at = ?, updated_at = ? WHERE url = ? AND published_at IS NULL`,
+		formatTime(publishedAt), formatTime(now), u)
+	if err != nil {
+		return fmt.Errorf("cannot date article %s: %w", u, err)
+	}
+	return nil
+}
+
+const notPostedOfActiveOrTrialQueryFormat = `
 SELECT a.id, a.source_id, s.title, a.url, a.title, a.excerpt, a.published_at
 FROM article a
 JOIN source s ON s.id = a.source_id
 WHERE s.deleted_at IS NULL
   AND s.status IN ('active', 'trial')
-  AND a.published_at > ?
+  AND %s
   AND NOT EXISTS (SELECT 1 FROM post p WHERE p.article_id = a.id)
-ORDER BY a.published_at DESC, a.id DESC`, formatTime(after))
+ORDER BY a.published_at IS NULL, a.published_at DESC, a.id DESC`
+
+var (
+	notPostedOfActiveOrTrialPublishedAfterQuery = fmt.Sprintf(notPostedOfActiveOrTrialQueryFormat,
+		"a.published_at > ?")
+	notPostedOfActiveOrTrialPublishedAfterOrUndatedQuery = fmt.Sprintf(notPostedOfActiveOrTrialQueryFormat,
+		"(a.published_at > ? OR a.published_at IS NULL)")
+)
+
+func (r *Article) ListNotPostedOfActiveOrTrialPublishedAfter(ctx context.Context, after time.Time) ([]domain.Article, error) {
+	return r.listNotPosted(ctx, notPostedOfActiveOrTrialPublishedAfterQuery, after)
+}
+
+func (r *Article) ListNotPostedOfActiveOrTrialPublishedAfterOrUndated(ctx context.Context, after time.Time) ([]domain.Article, error) {
+	return r.listNotPosted(ctx, notPostedOfActiveOrTrialPublishedAfterOrUndatedQuery, after)
+}
+
+func (r *Article) listNotPosted(ctx context.Context, query string, after time.Time) ([]domain.Article, error) {
+	rows, err := r.db.QueryContext(ctx, query, formatTime(after))
 	if err != nil {
 		return nil, fmt.Errorf("cannot query not posted articles: %w", err)
 	}

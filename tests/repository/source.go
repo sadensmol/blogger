@@ -3,6 +3,7 @@ package testsrepository
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 )
 
@@ -15,6 +16,7 @@ func NewSource(db *sql.DB) *Source {
 }
 
 type SourceRow struct {
+	SiteURL string // empty: the feed url with /site
 	FeedURL string
 	Title   string
 	Status  string
@@ -25,12 +27,16 @@ func (r *Source) Insert(ctx context.Context, row SourceRow, now time.Time) (int6
 	if title == "" {
 		title = row.FeedURL
 	}
+	siteURL := row.SiteURL
+	if siteURL == "" {
+		siteURL = fmt.Sprintf("%s/site", row.FeedURL)
+	}
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
 INSERT INTO source (site_url, feed_url, title, status, origin, status_changed_at, created_at, updated_at)
 VALUES (?, ?, ?, ?, 'user', ?, ?, ?)
 RETURNING id`,
-		row.FeedURL+"/site", row.FeedURL, title, row.Status,
+		siteURL, row.FeedURL, title, row.Status,
 		now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339)).Scan(&id)
 	return id, err
 }
@@ -95,4 +101,15 @@ func (r *Source) Detail(ctx context.Context, feedURL string) (SourceDetail, erro
 	var d SourceDetail
 	err := r.db.QueryRowContext(ctx, `SELECT status, origin, reason FROM source WHERE feed_url = ?`, feedURL).Scan(&d.Status, &d.Origin, &d.Reason)
 	return d, err
+}
+
+func (r *Source) SetFetchedAt(ctx context.Context, id int64, at time.Time) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE source SET fetched_at = ? WHERE id = ?`, at.Format(time.RFC3339), id)
+	return err
+}
+
+func (r *Source) BackfilledAt(ctx context.Context, id int64) (sql.NullString, error) {
+	var backfilledAt sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT backfilled_at FROM source WHERE id = ?`, id).Scan(&backfilledAt)
+	return backfilledAt, err
 }

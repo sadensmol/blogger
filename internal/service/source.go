@@ -90,6 +90,20 @@ func (s *Source) ListActiveOrTrial(ctx context.Context) ([]domain.Source, error)
 	return sources, nil
 }
 
+func (s *Source) MarkFetched(ctx context.Context, id domain.SourceID) error {
+	if err := s.repo.UpdateFetchedAt(ctx, id, s.now()); err != nil {
+		return fmt.Errorf("cannot mark blog %d fetched: %w", id, err)
+	}
+	return nil
+}
+
+func (s *Source) MarkBackfilled(ctx context.Context, id domain.SourceID) error {
+	if err := s.repo.UpdateBackfilledAt(ctx, id, s.now()); err != nil {
+		return fmt.Errorf("cannot mark blog %d backfilled: %w", id, err)
+	}
+	return nil
+}
+
 func (s *Source) Known(ctx context.Context, feedURL domain.URL) (bool, error) {
 	known, err := s.repo.ExistsByFeedURL(ctx, feedURL)
 	if err != nil {

@@ -29,6 +29,10 @@ const (
 	answeredLearned  = "Likes Go."
 	digestProfileFmt = "## My notes\n%s\n\n## Learned\n%s\n"
 	nothingLine      = "Nothing worth reading today."
+	noUnreadLine     = "No unread articles in your blogs' feeds yet."
+	notInChannelLine = "Could not post: the bot is not in this channel. Invite it with /invite @&lt;bot name&gt;."
+	replyURLPath     = "/response/show"
+	oldArticleAge    = 100 * 24 * time.Hour
 	failureLine      = "Digest failed: no agent could pick articles. See the logs."
 	noBlogsLine      = "No blogs yet. Add one with /blogs add <url>."
 	initPrompt       = "-p /init-profile"
@@ -103,7 +107,7 @@ func (s *DigestTestSuite) articleURL(name string) string {
 func (s *DigestTestSuite) addBlog(names ...string) int64 {
 	var items strings.Builder
 	for _, name := range names {
-		fmt.Fprintf(&items, itemFmt, name, s.articleURL(name))
+		fmt.Fprintf(&items, datedItemFmt, name, s.articleURL(name), s.Clock.Now().Add(-time.Hour).Format(time.RFC1123Z))
 	}
 	s.feeds.Set(digestFeedPath, "application/rss+xml", fmt.Sprintf(itemsFmt, items.String()))
 	id, err := s.sources.Insert(s.Ctx, testsrepository.SourceRow{
@@ -151,6 +155,18 @@ func (s *DigestTestSuite) pickCandidates() []string {
 	return urls
 }
 
+func (s *DigestTestSuite) replyTexts() []string {
+	var texts []string
+	for _, raw := range s.slack.Replies() {
+		var reply struct {
+			Text string `json:"text"`
+		}
+		s.Require().NoError(json.Unmarshal([]byte(raw), &reply))
+		texts = append(texts, reply.Text)
+	}
+	return texts
+}
+
 func (s *DigestTestSuite) postsWithoutMessage() int {
 	n, err := s.posts.CountWithoutMessage(s.Ctx)
 	s.Require().NoError(err)
@@ -195,15 +211,158 @@ func (s *DigestTestSuite) TestShowHeader() {
 	s.Equal("On request: 1 pick", s.slack.Posted()[0])
 }
 
-func (s *DigestTestSuite) TestNothingFitsPostsOneLine() {
+func (s *DigestTestSuite) TestMorningWhereNothingFitsPostsOneLine() {
 	s.addBlog("a", "b")
 	s.learnedProfile()
 	s.answerPicks()
 
-	err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestMorning)
 
 	s.Require().NoError(err)
 	s.Equal([]string{nothingLine}, s.slack.Posted())
+}
+
+func (s *DigestTestSuite) TestShowWithZeroPicksFallsBackToNextBackend() {
+	s.addBlog("a", "b")
+	s.learnedProfile()
+	s.answerPicks()
+	s.agents.Answer(llm.Codex, llm.SkillPickArticles, map[string]any{"picks": []map[string]any{{
+		"url": s.articleURL("b"), "description": "A post.", "topics": []string{"go"}, "reason": "Closest to Go.",
+	}}})
+
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	s.Require().Len(s.slack.Posted(), 2)
+	s.Equal("On request: 1 pick", s.slack.Posted()[0])
+	s.Contains(s.slack.Posted()[1], s.articleURL("b"))
+	s.Equal(testsrepository.RunResult{Status: string(domain.RunStatusOK), Backend: string(llm.Codex)},
+		s.latestRun(domain.RunKindDigestShow))
+}
+
+func (s *DigestTestSuite) TestShowWithZeroPicksFromEveryBackendFails() {
+	s.addBlog("a")
+	s.learnedProfile()
+	s.answerPicks()
+	s.agents.Answer(llm.Codex, llm.SkillPickArticles, map[string]any{"picks": []map[string]any{}})
+
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
+	s.Equal([]string{failureLine}, s.slack.Posted())
+	s.Equal(0, s.CountRows("post"))
+}
+
+func (s *DigestTestSuite) TestShowWithoutAnyArticleSaysWhy() {
+	s.addBlog()
+	s.learnedProfile()
+
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	s.Equal([]string{noUnreadLine}, s.slack.Posted())
+	s.Empty(s.agents.Args(llm.Claude))
+}
+
+func (s *DigestTestSuite) TestShowReadsNeverFetchedBlogDespiteFreshFetch() {
+	_, err := s.runs.Insert(s.Ctx, string(domain.RunKindFetch), string(domain.RunStatusOK), s.Clock.Now().Add(-10*time.Minute))
+	s.Require().NoError(err)
+	s.addBlog("a")
+	s.learnedProfile()
+	s.answerPicks("a")
+
+	err = s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	s.Equal(1, s.feeds.Requests(digestFeedPath))
+	s.Require().Len(s.slack.Posted(), 2)
+	s.Contains(s.slack.Posted()[1], s.articleURL("a"))
+}
+
+func (s *DigestTestSuite) TestShowPicksFromArticlesOlderThanTwoWeeks() {
+	sourceID := s.addBlog()
+	s.learnedProfile()
+	_, err := s.articles.Insert(s.Ctx, testsrepository.ArticleRow{
+		SourceID: sourceID, URL: s.articleURL("old"), PublishedAt: s.Clock.Now().Add(-oldArticleAge), Now: s.Clock.Now(),
+	})
+	s.Require().NoError(err)
+	_, err = s.articles.Insert(s.Ctx, testsrepository.ArticleRow{
+		SourceID: sourceID, URL: s.articleURL("too-old"), PublishedAt: s.Clock.Now().Add(-tests.HistoryWindow - time.Hour), Now: s.Clock.Now(),
+	})
+	s.Require().NoError(err)
+	s.answerPicks("old")
+
+	err = s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	s.Equal([]string{s.articleURL("old")}, s.pickCandidates())
+	s.Require().Len(s.slack.Posted(), 2)
+	s.Contains(s.slack.Posted()[1], s.articleURL("old"))
+}
+
+func (s *DigestTestSuite) TestMorningSkipsArticlesOlderThanTwoWeeksAndUndated() {
+	sourceID := s.addBlog()
+	s.learnedProfile()
+	for _, row := range []testsrepository.ArticleRow{
+		{SourceID: sourceID, URL: s.articleURL("old"), PublishedAt: s.Clock.Now().Add(-oldArticleAge), Now: s.Clock.Now()},
+		{SourceID: sourceID, URL: s.articleURL("undated"), Now: s.Clock.Now()},
+	} {
+		_, err := s.articles.Insert(s.Ctx, row)
+		s.Require().NoError(err)
+	}
+
+	err := s.digest.Run(s.Ctx, domain.RunKindDigestMorning)
+
+	s.Require().NoError(err)
+	s.Equal([]string{nothingLine}, s.slack.Posted())
+	s.Empty(s.agents.Args(llm.Claude))
+}
+
+func (s *DigestTestSuite) TestShowOffersUndatedArticlesLast() {
+	sourceID := s.addBlog("a")
+	s.learnedProfile()
+	_, err := s.articles.Insert(s.Ctx, testsrepository.ArticleRow{SourceID: sourceID, URL: s.articleURL("undated"), Now: s.Clock.Now()})
+	s.Require().NoError(err)
+	s.answerPicks("undated")
+
+	err = s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+
+	s.Require().NoError(err)
+	s.Equal([]string{s.articleURL("a"), s.articleURL("undated")}, s.pickCandidates())
+}
+
+func (s *DigestTestSuite) TestShowFailureRepliesWithTheReason() {
+	s.addBlog()
+	s.learnedProfile()
+	s.slack.PostFaults = []tests.PostFault{tests.PostNotInChannel}
+
+	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
+
+	s.Require().Error(err)
+	s.Equal([]string{notInChannelLine}, s.replyTexts())
+}
+
+func (s *DigestTestSuite) TestShowWhereAllBackendsFailRepliesWithTheReason() {
+	s.addBlog("a")
+	s.learnedProfile()
+	s.agents.Fail(llm.Claude)
+	s.agents.Fail(llm.Codex)
+
+	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
+
+	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
+	s.Equal([]string{failureLine}, s.replyTexts())
+}
+
+func (s *DigestTestSuite) TestShowSuccessSendsNoReply() {
+	s.addBlog("a")
+	s.learnedProfile()
+	s.answerPicks("a")
+
+	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
+
+	s.Require().NoError(err)
+	s.Empty(s.slack.Replies())
 }
 
 func (s *DigestTestSuite) TestNoCandidatesSkipsAgent() {
@@ -218,7 +377,7 @@ func (s *DigestTestSuite) TestNoCandidatesSkipsAgent() {
 	_, err = s.posts.Insert(s.Ctx, articleID, runID, s.Clock.Now().Add(-time.Hour))
 	s.Require().NoError(err)
 
-	err = s.digest.Run(s.Ctx, domain.RunKindDigestShow)
+	err = s.digest.Run(s.Ctx, domain.RunKindDigestMorning)
 
 	s.Require().NoError(err)
 	s.Equal([]string{nothingLine}, s.slack.Posted())

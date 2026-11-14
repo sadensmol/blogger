@@ -21,8 +21,14 @@ const (
 
 	noBlogsText    = "No blogs yet. Add one with /blogs add <url>."
 	nothingText    = "Nothing worth reading today."
+	noUnreadText   = "No unread articles in your blogs' feeds yet."
 	pickFailedText = "Digest failed: no agent could pick articles. See the logs."
 	morningDateFmt = "Mon, 2 Jan"
+
+	notInChannelText    = "Could not post: the bot is not in this channel. Invite it with /invite @<bot name>."
+	channelNotFoundText = "Could not post: the channel was not found. Check SLACK_CHANNEL_ID."
+	slackFailedFmt      = "Could not post to Slack: %s."
+	showFailedText      = "Could not make the digest. See the logs."
 )
 
 type DigestData struct {
@@ -69,6 +75,34 @@ func NewDigest(d DigestData) *Digest {
 	}
 }
 
+// Show runs digest-show and answers the slash command privately when it fails: a failed post never reaches the channel.
+func (d *Digest) Show(ctx context.Context, replyURL string) error {
+	err := d.Run(ctx, domain.RunKindDigestShow)
+	if err == nil {
+		return nil
+	}
+	if replyErr := d.poster.Reply(ctx, replyURL, slackpost.Escape(showFailure(err))); replyErr != nil {
+		log.Ctx(ctx).Error().Err(replyErr).Msg("cannot tell the user why /show failed")
+	}
+	return err
+}
+
+// showFailure never quotes the error: it may hold a url or a path.
+func showFailure(err error) string {
+	switch code := slackpost.ErrorCode(err); {
+	case code == "not_in_channel":
+		return notInChannelText
+	case code == "channel_not_found":
+		return channelNotFoundText
+	case code != "":
+		return fmt.Sprintf(slackFailedFmt, code)
+	case errors.Is(err, llm.ErrAllBackendsFailed):
+		return pickFailedText
+	default:
+		return showFailedText
+	}
+}
+
 // Run takes kind digest-morning or digest-show.
 func (d *Digest) Run(ctx context.Context, kind domain.RunKind) error {
 	if err := withRun(ctx, d.runs, kind, func(runID domain.RunID) (llm.Backend, error) {
@@ -95,7 +129,7 @@ func (d *Digest) digest(ctx context.Context, kind domain.RunKind, runID domain.R
 		return "", nil
 	}
 
-	if err := d.articles.FetchIfOlderThan(ctx, fetchMaxAge); err != nil {
+	if err := d.articles.FetchFeedsIfOlderThan(ctx, fetchMaxAge); err != nil {
 		log.Ctx(ctx).Warn().Err(err).Msgf("digest run %d goes on with the stored articles", runID)
 	}
 
@@ -104,18 +138,23 @@ func (d *Digest) digest(ctx context.Context, kind domain.RunKind, runID domain.R
 		return "", fmt.Errorf("cannot prepare the interests file: %w", err)
 	}
 
-	candidates, err := d.articles.Candidates(ctx)
+	// /show asks for something to read now: any unread article will do; the morning digest keeps its quality bar
+	readCandidates, emptyText, count := d.articles.Candidates, nothingText, domain.PickCount{Max: d.size}
+	if kind == domain.RunKindDigestShow {
+		readCandidates, emptyText, count = d.articles.CandidatesOverHistory, noUnreadText, domain.PickCount{Min: 1, Max: d.size}
+	}
+	candidates, err := readCandidates(ctx)
 	if err != nil {
 		return "", fmt.Errorf("cannot read candidates: %w", err)
 	}
 	if len(candidates) == 0 {
-		if err := d.poster.Text(ctx, nothingText); err != nil {
-			return "", fmt.Errorf("cannot post that no article is new: %w", err)
+		if err := d.poster.Text(ctx, emptyText); err != nil {
+			return "", fmt.Errorf("cannot post that no article is unread: %w", err)
 		}
 		return "", nil
 	}
 
-	picks, backend, err := d.llm.PickArticles(ctx, llm.PickInput{Candidates: candidates, Profile: profile, Max: d.size})
+	picks, backend, err := d.llm.PickArticles(ctx, llm.PickInput{Candidates: candidates, Profile: profile, Count: count})
 	if errors.Is(err, llm.ErrAllBackendsFailed) {
 		if postErr := d.poster.Text(ctx, pickFailedText); postErr != nil {
 			log.Ctx(ctx).Error().Err(postErr).Msgf("cannot tell slack that digest run %d failed", runID)

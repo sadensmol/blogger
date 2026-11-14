@@ -50,6 +50,13 @@ func formatTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+func formatOptionalTime(t time.Time) sql.NullString {
+	if t.IsZero() {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: formatTime(t), Valid: true}
+}
+
 func parseTime(s string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339, s)
 	if err != nil {

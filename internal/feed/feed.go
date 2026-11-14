@@ -36,6 +36,7 @@ var (
 type Client struct {
 	http   *http.Client
 	parser *gofeed.Parser
+	gates  *hostGates // nil: no pause between requests
 }
 
 type Info struct {
@@ -55,10 +56,16 @@ type Option func(*options)
 
 type options struct {
 	allowLoopback bool
+	hostDelay     time.Duration
 }
 
 func WithLoopbackAllowed() Option {
 	return func(o *options) { o.allowLoopback = true }
+}
+
+// WithHostDelay sends one request at a time to a host and waits delay between them.
+func WithHostDelay(delay time.Duration) Option {
+	return func(o *options) { o.hostDelay = delay }
 }
 
 func NewClient(timeout time.Duration, opts ...Option) *Client {
@@ -77,7 +84,12 @@ func NewClient(timeout time.Duration, opts ...Option) *Client {
 	transport.Proxy = nil
 	transport.DialContext = dialer.DialContext
 
+	var gates *hostGates
+	if cfg.hostDelay > 0 {
+		gates = &hostGates{delay: cfg.hostDelay, hosts: map[string]*hostGate{}}
+	}
 	return &Client{
+		gates: gates,
 		http: &http.Client{
 			Timeout:   timeout,
 			Transport: transport,
@@ -178,6 +190,13 @@ func (c *Client) get(ctx context.Context, target domain.URL) ([]byte, error) {
 	}
 	req.Header.Set("User-Agent", userAgent)
 
+	if c.gates != nil {
+		leave, err := c.gates.enter(ctx, req.URL.Host)
+		if err != nil {
+			return nil, fmt.Errorf("cannot get %s: %w", target, err)
+		}
+		defer leave()
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot get %s: %w", target, err)

@@ -72,7 +72,7 @@ func (s *Scheduler) submitMorning(ctx context.Context, local time.Time) {
 		return
 	}
 	if MorningDue(local, s.d.At, last.In(s.d.Location)) {
-		log.Ctx(ctx).Debug().Msgf("morning digest due: %s", s.d.Jobs.Submit(usecase.JobMorningDigest))
+		log.Ctx(ctx).Debug().Msgf("morning digest due: %s", s.d.Jobs.Submit(usecase.Job{Kind: usecase.JobMorningDigest}))
 	}
 }
 
@@ -86,7 +86,7 @@ func (s *Scheduler) submitDiscovery(ctx context.Context, local time.Time) {
 		return
 	}
 	if IntervalDue(local, last, discoveryEvery) {
-		log.Ctx(ctx).Debug().Msgf("discovery due: %s", s.d.Jobs.Submit(usecase.JobDiscovery))
+		log.Ctx(ctx).Debug().Msgf("discovery due: %s", s.d.Jobs.Submit(usecase.Job{Kind: usecase.JobDiscovery}))
 	}
 }
 

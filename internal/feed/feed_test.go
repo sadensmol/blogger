@@ -205,3 +205,17 @@ func TestFetchRefusesRedirectLoop(t *testing.T) {
 
 	require.Error(t, err)
 }
+
+func TestHostDelaySpacesRequestsToOneHost(t *testing.T) {
+	const delay = 200 * time.Millisecond
+	srv := serveFixtures(t, map[string]string{"/feed.xml": "rss.xml"})
+	client := feed.NewClient(timeout, feed.WithLoopbackAllowed(), feed.WithHostDelay(delay))
+
+	start := time.Now()
+	for range 3 {
+		_, err := client.Fetch(context.Background(), mustURL(t, srv.URL+"/feed.xml"))
+		require.NoError(t, err)
+	}
+
+	require.GreaterOrEqual(t, time.Since(start), 2*delay)
+}

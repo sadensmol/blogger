@@ -14,9 +14,14 @@ type Pick struct {
 	Reason      string
 }
 
-func ValidatePicks(picks []Pick, candidates []Article, max int) error {
-	if len(picks) > max {
-		return fmt.Errorf("got %d picks, at most %d allowed: %w", len(picks), max, ErrBadOutput)
+type PickCount struct{ Min, Max int }
+
+func ValidatePicks(picks []Pick, candidates []Article, count PickCount) error {
+	if len(picks) < count.Min {
+		return fmt.Errorf("got %d picks, at least %d required: %w", len(picks), count.Min, ErrBadOutput)
+	}
+	if len(picks) > count.Max {
+		return fmt.Errorf("got %d picks, at most %d allowed: %w", len(picks), count.Max, ErrBadOutput)
 	}
 
 	known := make(map[URL]bool, len(candidates))

@@ -111,7 +111,7 @@ func (h *Handler) show(ctx context.Context, cmd slack.SlashCommand) string {
 	if cmd.ChannelID != h.channelID {
 		return fmt.Sprintf("Use /show in <#%s>.", h.channelID)
 	}
-	result := h.jobs.Submit(usecase.JobShowDigest)
+	result := h.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest, ReplyURL: cmd.ResponseURL})
 	log.Ctx(ctx).Info().Msgf("/show from %s in %s: %s", cmd.UserID, cmd.ChannelID, result)
 	switch result {
 	case usecase.Queued:
