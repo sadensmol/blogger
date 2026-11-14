@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pressly/goose/v3"
+	"github.com/rs/zerolog/log"
 	_ "modernc.org/sqlite"
 
 	"github.com/sadensmol/blogger/db"
@@ -23,7 +24,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	}
 	if err := migrate(ctx, sqlDB); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {
-			return nil, fmt.Errorf("cannot close sqlite %s after failed migration (%v): %w", path, closeErr, err)
+			log.Ctx(ctx).Error().Err(closeErr).Msgf("cannot close sqlite %s after failed migration", path)
 		}
 		return nil, err
 	}

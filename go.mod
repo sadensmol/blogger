@@ -5,6 +5,7 @@ go 1.27
 require (
 	github.com/caarlos0/env/v11 v11.4.2
 	github.com/pressly/goose/v3 v3.30.1
+	github.com/rs/zerolog v1.35.1
 	github.com/stretchr/testify v1.12.1
 	modernc.org/sqlite v1.62.0
 )
@@ -12,6 +13,7 @@ require (
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mfridman/interpolate v0.2.0 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect

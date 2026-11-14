@@ -1,10 +1,13 @@
 package tests_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/suite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"github.com/sadensmol/blogger/internal/domain"
 	"github.com/sadensmol/blogger/internal/repository"
@@ -45,8 +48,8 @@ func (s *StoreTestSuite) SetupTest() {
 	s.profileVersions = testsrepository.NewProfileVersion(s.DB)
 }
 
-func (s *StoreTestSuite) insertSource(feed, status string) int64 {
-	id, err := s.sources.Insert(s.Ctx, testsrepository.SourceRow{FeedURL: feed, Status: status}, s.Clock.Now())
+func (s *StoreTestSuite) insertSource(feed string, status domain.SourceStatus) int64 {
+	id, err := s.sources.Insert(s.Ctx, testsrepository.SourceRow{FeedURL: feed, Status: string(status)}, s.Clock.Now())
 	s.Require().NoError(err)
 	return id
 }
@@ -59,8 +62,8 @@ func (s *StoreTestSuite) insertArticle(sourceID int64, url string, publishedAt t
 	return id
 }
 
-func (s *StoreTestSuite) insertRun(status string) int64 {
-	id, err := s.runs.Insert(s.Ctx, string(domain.RunKindFetch), status, s.Clock.Now())
+func (s *StoreTestSuite) insertRun(status domain.RunStatus) int64 {
+	id, err := s.runs.Insert(s.Ctx, string(domain.RunKindFetch), string(status), s.Clock.Now())
 	s.Require().NoError(err)
 	return id
 }
@@ -94,13 +97,15 @@ func (s *StoreTestSuite) TestForeignKeysAreOn() {
 		SourceID: unknownSourceID, URL: "https://example.com/a", PublishedAt: s.Clock.Now(), Now: s.Clock.Now(),
 	})
 
-	s.Error(err)
+	var sqliteErr *sqlite.Error
+	s.Require().True(errors.As(err, &sqliteErr))
+	s.Equal(sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY, sqliteErr.Code())
 }
 
 func (s *StoreTestSuite) TestSecondPostForSameArticleFails() {
-	sourceID := s.insertSource(feedURL, "active")
+	sourceID := s.insertSource(feedURL, domain.SourceActive)
 	articleID := s.insertArticle(sourceID, "https://example.com/a", s.Clock.Now())
-	runID := s.insertRun("running")
+	runID := s.insertRun(domain.RunStatusRunning)
 	post := domain.Post{ArticleID: domain.ArticleID(articleID), RunID: domain.RunID(runID), ChannelID: "C1", MessageTS: "1.1"}
 	repo := repository.NewPost(s.DB)
 	_, err := repo.Create(s.Ctx, post, s.Clock.Now())
@@ -147,7 +152,7 @@ func (s *StoreTestSuite) TestCreateKnownSourceFails() {
 }
 
 func (s *StoreTestSuite) TestArticleDuplicateURLIgnored() {
-	sourceID := s.insertSource(feedURL, "active")
+	sourceID := s.insertSource(feedURL, domain.SourceActive)
 	repo := repository.NewArticle(s.DB)
 	article := domain.Article{SourceID: domain.SourceID(sourceID), URL: "https://example.com/a", Title: "A", PublishedAt: s.Clock.Now()}
 	created, err := repo.CreateIgnoringDuplicate(s.Ctx, article, s.Clock.Now())
@@ -172,10 +177,10 @@ func (s *StoreTestSuite) TestListNotPostedSkipsPausedDeletedPostedAndOld() {
 		otherArticleAge = 3 * time.Hour
 	)
 	now := s.Clock.Now()
-	active := s.insertSource("https://active.example.com/feed", "active")
-	trial := s.insertSource("https://trial.example.com/feed", "trial")
-	paused := s.insertSource("https://paused.example.com/feed", "paused")
-	deleted := s.insertSource("https://deleted.example.com/feed", "active")
+	active := s.insertSource("https://active.example.com/feed", domain.SourceActive)
+	trial := s.insertSource("https://trial.example.com/feed", domain.SourceTrial)
+	paused := s.insertSource("https://paused.example.com/feed", domain.SourcePaused)
+	deleted := s.insertSource("https://deleted.example.com/feed", domain.SourceActive)
 	_, err := s.DB.ExecContext(s.Ctx, `UPDATE source SET deleted_at = ? WHERE id = ?`, now.Format(time.RFC3339), deleted)
 	s.Require().NoError(err)
 	s.insertArticle(active, activeNewURL, now.Add(-activeNewAge))
@@ -184,7 +189,7 @@ func (s *StoreTestSuite) TestListNotPostedSkipsPausedDeletedPostedAndOld() {
 	s.insertArticle(deleted, "https://example.com/deleted-new", now.Add(-otherArticleAge))
 	s.insertArticle(active, "https://example.com/old", now.Add(-oldAge))
 	posted := s.insertArticle(active, "https://example.com/posted", now.Add(-otherArticleAge))
-	s.insertPost(posted, s.insertRun("ok"))
+	s.insertPost(posted, s.insertRun(domain.RunStatusOK))
 
 	articles, err := repository.NewArticle(s.DB).ListNotPostedOfActiveOrTrialPublishedAfter(s.Ctx, now.Add(-maxAge))
 
@@ -197,8 +202,8 @@ func (s *StoreTestSuite) TestListNotPostedSkipsPausedDeletedPostedAndOld() {
 }
 
 func (s *StoreTestSuite) TestSourceVotesCountOnlyNotRemoved() {
-	sourceID := s.insertSource(feedURL, "active")
-	runID := s.insertRun("ok")
+	sourceID := s.insertSource(feedURL, domain.SourceActive)
+	runID := s.insertRun(domain.RunStatusOK)
 	var postIDs []int64
 	for _, url := range []string{"https://example.com/1", "https://example.com/2", "https://example.com/3"} {
 		postIDs = append(postIDs, s.insertPost(s.insertArticle(sourceID, url, s.Clock.Now()), runID))
@@ -214,9 +219,32 @@ func (s *StoreTestSuite) TestSourceVotesCountOnlyNotRemoved() {
 	s.Equal(domain.Votes{Up: 2, Down: 1}, source.Votes)
 }
 
+func (s *StoreTestSuite) TestSourceVotesSinceStatusCountOnlyAfterStatusChange() {
+	sourceID := s.insertSource(feedURL, domain.SourceTrial)
+	runID := s.insertRun(domain.RunStatusOK)
+	var postIDs []int64
+	for _, url := range []string{"https://example.com/1", "https://example.com/2", "https://example.com/3", "https://example.com/4"} {
+		postIDs = append(postIDs, s.insertPost(s.insertArticle(sourceID, url, s.Clock.Now()), runID))
+	}
+	s.insertReaction(postIDs[0], userOne, domain.VoteUp, false)
+	s.Clock.Advance(time.Hour)
+	statusChangedAt := s.Clock.Now()
+	s.Require().NoError(s.sources.SetStatusChangedAt(s.Ctx, sourceID, statusChangedAt))
+	s.Clock.Advance(time.Hour)
+	s.insertReaction(postIDs[1], userOne, domain.VoteUp, false)
+	s.insertReaction(postIDs[2], userOne, domain.VoteDown, false)
+	s.insertReaction(postIDs[3], userOne, domain.VoteUp, true)
+
+	source, err := repository.NewSource(s.DB).FindNotDeletedByID(s.Ctx, domain.SourceID(sourceID))
+
+	s.Require().NoError(err)
+	s.Equal(domain.Votes{Up: 1, Down: 1}, source.VotesSinceStatus)
+	s.Equal(domain.Votes{Up: 2, Down: 1}, source.Votes)
+}
+
 func (s *StoreTestSuite) TestFailRunningMarksInterrupted() {
-	runID := s.insertRun("running")
-	s.insertRun("ok")
+	runID := s.insertRun(domain.RunStatusRunning)
+	s.insertRun(domain.RunStatusOK)
 
 	failed, err := repository.NewRun(s.DB).FailRunning(s.Ctx, s.Clock.Now())
 
@@ -224,14 +252,14 @@ func (s *StoreTestSuite) TestFailRunningMarksInterrupted() {
 	s.Equal(int64(1), failed)
 	status, err := s.runs.Status(s.Ctx, runID)
 	s.Require().NoError(err)
-	s.Equal("failed", status)
+	s.Equal(string(domain.RunStatusFailed), status)
 }
 
 func (s *StoreTestSuite) TestLastLearnedIgnoresNotesVersions() {
 	t1 := s.Clock.Now()
-	s.Require().NoError(s.profileVersions.Insert(s.Ctx, "init", t1))
+	s.Require().NoError(s.profileVersions.Insert(s.Ctx, string(domain.ProfileInit), t1))
 	s.Clock.Advance(time.Hour)
-	s.Require().NoError(s.profileVersions.Insert(s.Ctx, "notes", s.Clock.Now()))
+	s.Require().NoError(s.profileVersions.Insert(s.Ctx, string(domain.ProfileNotes), s.Clock.Now()))
 
 	last, err := repository.NewProfileVersion(s.DB).LastCreatedAtOfInitOrUpdate(s.Ctx)
 

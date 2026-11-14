@@ -35,3 +35,8 @@ func (r *Source) DeletedAt(ctx context.Context, id int64) (sql.NullString, error
 	err := r.db.QueryRowContext(ctx, `SELECT deleted_at FROM source WHERE id = ?`, id).Scan(&deletedAt)
 	return deletedAt, err
 }
+
+func (r *Source) SetStatusChangedAt(ctx context.Context, id int64, at time.Time) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE source SET status_changed_at = ? WHERE id = ?`, at.Format(time.RFC3339), id)
+	return err
+}
