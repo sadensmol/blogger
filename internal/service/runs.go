@@ -11,6 +11,8 @@ import (
 	"github.com/sadensmol/blogger/internal/repository"
 )
 
+const failedDigestBlocksFor = time.Hour
+
 type Runs struct {
 	repo *repository.Run
 	now  func() time.Time
@@ -57,7 +59,7 @@ func (r *Runs) LastStarted(ctx context.Context, kind domain.RunKind) (time.Time,
 }
 
 func (r *Runs) LastDigestStarted(ctx context.Context) (time.Time, error) {
-	startedAt, err := r.repo.LastMorningOrShowStartedAt(ctx)
+	startedAt, err := r.repo.LastMorningOrShowProvidedStartedAt(ctx, r.now().Add(-failedDigestBlocksFor))
 	if err != nil {
 		return time.Time{}, fmt.Errorf("cannot read last digest run: %w", err)
 	}

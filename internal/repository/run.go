@@ -60,11 +60,17 @@ func (r *Run) LastStartedAt(ctx context.Context, kind domain.RunKind) (time.Time
 	return parseOptionalTime(startedAt)
 }
 
-func (r *Run) LastMorningOrShowStartedAt(ctx context.Context) (time.Time, error) {
+func (r *Run) LastMorningOrShowProvidedStartedAt(ctx context.Context, failedSince time.Time) (time.Time, error) {
 	var startedAt sql.NullString
-	if err := r.db.QueryRowContext(ctx, `SELECT MAX(started_at) FROM run WHERE kind IN (?, ?)`,
-		domain.RunKindDigestMorning, domain.RunKindDigestShow).Scan(&startedAt); err != nil {
-		return time.Time{}, fmt.Errorf("cannot find last morning or show digest run: %w", err)
+	if err := r.db.QueryRowContext(ctx, `
+SELECT MAX(started_at) FROM run
+WHERE kind IN (?, ?)
+  AND (status IN (?, ?) OR (status = ? AND error <> ? AND datetime(started_at) > datetime(?)))`,
+		domain.RunKindDigestMorning, domain.RunKindDigestShow,
+		domain.RunStatusOK, domain.RunStatusRunning,
+		domain.RunStatusFailed, interruptedRunError, formatTime(failedSince),
+	).Scan(&startedAt); err != nil {
+		return time.Time{}, fmt.Errorf("cannot find last provided morning or show digest run: %w", err)
 	}
 	return parseOptionalTime(startedAt)
 }

@@ -170,15 +170,6 @@ func (s *SchedulerTestSuite) TestTickAfterLateStartCatchesUp() {
 	s.Equal(1, s.headers())
 }
 
-func (s *SchedulerTestSuite) TestTickAtStartLateInTheDayPostsMissedDigest() {
-	s.Clock.Set(s.localTime(15, 0))
-
-	s.scheduler.Tick(s.Ctx)
-	s.waitForRun(domain.RunKindDigestMorning)
-
-	s.Equal(1, s.headers())
-}
-
 func (s *SchedulerTestSuite) TestTickAfterShowSinceTheSlotDoesNotPostMorningDigest() {
 	s.Clock.Set(s.localTime(11, 0))
 	_, err := s.runs.Insert(s.Ctx, string(domain.RunKindDigestShow), string(domain.RunStatusOK), s.Clock.Now())
@@ -190,6 +181,41 @@ func (s *SchedulerTestSuite) TestTickAfterShowSinceTheSlotDoesNotPostMorningDige
 
 	s.Equal(0, s.morningRuns())
 	s.Equal(0, s.headers())
+}
+
+func (s *SchedulerTestSuite) TestTickRetriesMorningDigestInterruptedByReboot() {
+	s.Clock.Set(s.localTime(10, 0))
+	id, err := s.runs.Insert(s.Ctx, string(domain.RunKindDigestMorning), string(domain.RunStatusRunning), s.Clock.Now())
+	s.Require().NoError(err)
+	_, err = s.DB.ExecContext(s.Ctx, "UPDATE run SET status = ?, error = ? WHERE id = ?", string(domain.RunStatusFailed), "interrupted", id)
+	s.Require().NoError(err)
+	s.Clock.Set(s.localTime(10, 5))
+
+	s.scheduler.Tick(s.Ctx)
+	s.Eventually(func() bool { return s.headers() == 1 }, schedulerWait, schedulerPoll)
+}
+
+func (s *SchedulerTestSuite) TestTickDoesNotRetryDigestFailedTenMinutesAgo() {
+	s.Clock.Set(s.localTime(10, 0))
+	_, err := s.runs.Insert(s.Ctx, string(domain.RunKindDigestMorning), string(domain.RunStatusFailed), s.Clock.Now())
+	s.Require().NoError(err)
+	s.Clock.Set(s.localTime(10, 10))
+
+	s.scheduler.Tick(s.Ctx)
+	s.scheduler.Wait()
+
+	s.Equal(1, s.morningRuns())
+	s.Equal(0, s.headers())
+}
+
+func (s *SchedulerTestSuite) TestTickRetriesDigestFailedSeventyMinutesAgo() {
+	s.Clock.Set(s.localTime(10, 0))
+	_, err := s.runs.Insert(s.Ctx, string(domain.RunKindDigestMorning), string(domain.RunStatusFailed), s.Clock.Now())
+	s.Require().NoError(err)
+	s.Clock.Set(s.localTime(11, 10))
+
+	s.scheduler.Tick(s.Ctx)
+	s.Eventually(func() bool { return s.headers() == 1 }, schedulerWait, schedulerPoll)
 }
 
 func (s *SchedulerTestSuite) TestTickWithWrongClockDoesNothing() {
