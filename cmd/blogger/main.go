@@ -36,7 +36,7 @@ func run(args []string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
-		if err := app.Serve(ctx, cfg); err != nil {
+		if err := app.Serve(ctx, cfg, version); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}

@@ -354,13 +354,13 @@ func (s *SlackTestSuite) TestOwnerReactionRemovedDropsVote() {
 }
 
 func (s *SlackTestSuite) TestServeWithBadTimeZoneFails() {
-	err := app.Serve(s.Ctx, config.Serve{LogLevel: "info", TimeZone: "Mars/Base", DigestTime: "10:00"})
+	err := app.Serve(s.Ctx, config.Serve{LogLevel: "info", TimeZone: "Mars/Base", DigestTime: "10:00"}, "dev")
 
 	s.ErrorContains(err, "BLOGGER_TIME_ZONE")
 }
 
 func (s *SlackTestSuite) TestServeWithBadDigestTimeFails() {
-	err := app.Serve(s.Ctx, config.Serve{LogLevel: "info", TimeZone: "UTC", DigestTime: "25:61"})
+	err := app.Serve(s.Ctx, config.Serve{LogLevel: "info", TimeZone: "UTC", DigestTime: "25:61"}, "dev")
 
 	s.ErrorContains(err, "BLOGGER_DIGEST_TIME")
 }

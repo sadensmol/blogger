@@ -74,7 +74,7 @@ func ProfileCLI(ctx context.Context, cfg config.Store, args []string) error {
 	return nil
 }
 
-func Serve(ctx context.Context, cfg config.Serve) error {
+func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -91,6 +91,7 @@ func Serve(ctx context.Context, cfg config.Serve) error {
 		return fmt.Errorf("cannot use BLOGGER_DIGEST_TIME: %w", err)
 	}
 	zerolog.SetGlobalLevel(level)
+	log.Ctx(ctx).Info().Msgf("blogger %s starting", version)
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("cannot find the home folder: %w", err)
