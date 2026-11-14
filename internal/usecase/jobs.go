@@ -74,6 +74,11 @@ func (j *Jobs) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case kind := <-j.queue:
+			// select picks at random when both are ready: a stopped worker starts no new job
+			if ctx.Err() != nil {
+				j.forget(kind)
+				return
+			}
 			j.execute(ctx, kind)
 		}
 	}
@@ -82,6 +87,12 @@ func (j *Jobs) Run(ctx context.Context) {
 // execute lets a started job finish after ctx ends: it must not kill its agent halfway.
 func (j *Jobs) execute(ctx context.Context, kind JobKind) {
 	jobCtx := context.WithoutCancel(ctx)
+	defer j.forget(kind)
+	defer func() {
+		if r := recover(); r != nil {
+			log.Ctx(jobCtx).Error().Msgf("job %s panicked: %v", kind, r)
+		}
+	}()
 	var err error
 	switch kind {
 	case JobMorningDigest:
@@ -94,8 +105,10 @@ func (j *Jobs) execute(ctx context.Context, kind JobKind) {
 	if err != nil {
 		log.Ctx(jobCtx).Error().Err(err).Msgf("job %s failed", kind)
 	}
+}
 
+func (j *Jobs) forget(kind JobKind) {
 	j.mu.Lock()
+	defer j.mu.Unlock()
 	delete(j.waiting, kind)
-	j.mu.Unlock()
 }

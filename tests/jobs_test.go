@@ -51,7 +51,7 @@ func (s *JobsTestSuite) SetupTest() {
 	s.slack = tests.NewFakeSlack()
 	s.agents = tests.NewFakeAgents(s.T())
 	s.runs = testsrepository.NewRun(s.DB)
-	s.jobs = s.newJobs(jobsQueueSize)
+	s.jobs = usecase.NewJobs(s.jobsData(jobsQueueSize))
 
 	s.feeds.Set(jobsFeedPath, "application/rss+xml", fmt.Sprintf(itemsFmt, fmt.Sprintf(itemFmt, jobsArticle, s.articleURL())))
 	_, err := testsrepository.NewSource(s.DB).Insert(s.Ctx, testsrepository.SourceRow{
@@ -76,7 +76,7 @@ func (s *JobsTestSuite) articleURL() string {
 	return fmt.Sprintf("%s/%s", s.feeds.URL(), jobsArticle)
 }
 
-func (s *JobsTestSuite) newJobs(size int) *usecase.Jobs {
+func (s *JobsTestSuite) jobsData(size int) usecase.JobsData {
 	profilePath := filepath.Join(s.T().TempDir(), "interests.md")
 	s.Require().NoError(os.WriteFile(profilePath, fmt.Appendf(nil, digestProfileFmt, digestNotes, digestLearned), 0o644))
 
@@ -97,7 +97,7 @@ func (s *JobsTestSuite) newJobs(size int) *usecase.Jobs {
 	location, err := time.LoadLocation("Europe/Berlin")
 	s.Require().NoError(err)
 
-	return usecase.NewJobs(usecase.JobsData{
+	return usecase.JobsData{
 		Digest: usecase.NewDigest(usecase.DigestData{
 			Articles: service.NewArticles(service.ArticlesData{
 				Sources: sourceSvc,
@@ -129,7 +129,7 @@ func (s *JobsTestSuite) newJobs(size int) *usecase.Jobs {
 			LLM:     runner,
 		}),
 		Size: size,
-	})
+	}
 }
 
 // startWorker returns the cancel of the worker and a channel closed when Run returns; cleanup stops it.
@@ -155,6 +155,13 @@ func (s *JobsTestSuite) runStatus(kind domain.RunKind) string {
 	return result.Status
 }
 
+func (s *JobsTestSuite) okRuns(kind domain.RunKind) int {
+	var n int
+	s.Require().NoError(s.DB.QueryRowContext(s.Ctx, "SELECT COUNT(*) FROM run WHERE kind = ? AND status = ?",
+		string(kind), string(domain.RunStatusOK)).Scan(&n))
+	return n
+}
+
 func (s *JobsTestSuite) TestJobsRunOneAtATime() {
 	s.agents.Sleep(llm.Claude, 1)
 	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobShowDigest))
@@ -176,9 +183,16 @@ func (s *JobsTestSuite) TestSubmitSameKindWhileWaitingOrRunningIsMerged() {
 	s.startWorker()
 
 	s.Eventually(func() bool { return s.runStatus(domain.RunKindDigestShow) == string(domain.RunStatusOK) }, jobsWaitTimeout, jobsTick)
-	var shows int
-	s.Require().NoError(s.DB.QueryRowContext(s.Ctx, "SELECT COUNT(*) FROM run WHERE kind = ?", string(domain.RunKindDigestShow)).Scan(&shows))
-	s.Equal(1, shows)
+	s.Equal(1, s.okRuns(domain.RunKindDigestShow))
+}
+
+func (s *JobsTestSuite) TestSubmitSameKindWhileRunningIsMerged() {
+	s.agents.Sleep(llm.Claude, 1)
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobShowDigest))
+	s.startWorker()
+	s.Eventually(func() bool { return len(s.agents.Args(llm.Claude)) > 0 }, jobsWaitTimeout, jobsTick)
+
+	s.Equal(usecase.AlreadyQueued, s.jobs.Submit(usecase.JobShowDigest))
 }
 
 func (s *JobsTestSuite) TestSubmitAfterFinishQueuesAgain() {
@@ -187,10 +201,11 @@ func (s *JobsTestSuite) TestSubmitAfterFinishQueuesAgain() {
 	s.Eventually(func() bool { return s.runStatus(domain.RunKindDigestShow) == string(domain.RunStatusOK) }, jobsWaitTimeout, jobsTick)
 
 	s.Eventually(func() bool { return s.jobs.Submit(usecase.JobShowDigest) == usecase.Queued }, jobsWaitTimeout, jobsTick)
+	s.Eventually(func() bool { return s.okRuns(domain.RunKindDigestShow) == 2 }, jobsWaitTimeout, jobsTick)
 }
 
 func (s *JobsTestSuite) TestFullQueueAnswersBusy() {
-	jobs := s.newJobs(1)
+	jobs := usecase.NewJobs(s.jobsData(1))
 
 	s.Equal(usecase.Queued, jobs.Submit(usecase.JobShowDigest))
 	s.Equal(usecase.Busy, jobs.Submit(usecase.JobDiscovery))
@@ -210,4 +225,35 @@ func (s *JobsTestSuite) TestWorkerStopsAfterCancel() {
 		s.FailNow("worker did not stop")
 	}
 	s.Equal(string(domain.RunStatusOK), s.runStatus(domain.RunKindDigestShow))
+}
+
+func (s *JobsTestSuite) TestStoppedWorkerStartsNoQueuedJob() {
+	s.agents.Sleep(llm.Claude, 1)
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobShowDigest))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobDiscovery))
+	cancel, stopped := s.startWorker()
+	s.Eventually(func() bool { return len(s.agents.Args(llm.Claude)) > 0 }, jobsWaitTimeout, jobsTick)
+
+	cancel()
+
+	select {
+	case <-stopped:
+	case <-time.After(jobsStopWithin):
+		s.FailNow("worker did not stop")
+	}
+	s.Equal(1, s.okRuns(domain.RunKindDigestShow))
+	s.Empty(s.runStatus(domain.RunKindDiscovery))
+}
+
+func (s *JobsTestSuite) TestWorkerSurvivesPanickingJob() {
+	data := s.jobsData(jobsQueueSize)
+	data.Digest = nil
+	s.jobs = usecase.NewJobs(data)
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobShowDigest))
+	s.Equal(usecase.Queued, s.jobs.Submit(usecase.JobDiscovery))
+
+	s.startWorker()
+
+	s.Eventually(func() bool { return s.runStatus(domain.RunKindDiscovery) == string(domain.RunStatusOK) }, jobsWaitTimeout, jobsTick)
+	s.Eventually(func() bool { return s.jobs.Submit(usecase.JobShowDigest) == usecase.Queued }, jobsWaitTimeout, jobsTick)
 }
