@@ -16,16 +16,21 @@ func NewSource(db *sql.DB) *Source {
 
 type SourceRow struct {
 	FeedURL string
+	Title   string
 	Status  string
 }
 
 func (r *Source) Insert(ctx context.Context, row SourceRow, now time.Time) (int64, error) {
+	title := row.Title
+	if title == "" {
+		title = row.FeedURL
+	}
 	var id int64
 	err := r.db.QueryRowContext(ctx, `
 INSERT INTO source (site_url, feed_url, title, status, origin, status_changed_at, created_at, updated_at)
 VALUES (?, ?, ?, ?, 'user', ?, ?, ?)
 RETURNING id`,
-		row.FeedURL+"/site", row.FeedURL, row.FeedURL, row.Status,
+		row.FeedURL+"/site", row.FeedURL, title, row.Status,
 		now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339)).Scan(&id)
 	return id, err
 }
