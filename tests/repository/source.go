@@ -40,3 +40,8 @@ func (r *Source) SetStatusChangedAt(ctx context.Context, id int64, at time.Time)
 	_, err := r.db.ExecContext(ctx, `UPDATE source SET status_changed_at = ? WHERE id = ?`, at.Format(time.RFC3339), id)
 	return err
 }
+
+func (r *Source) MarkDeleted(ctx context.Context, id int64, now time.Time) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE source SET deleted_at = ? WHERE id = ?`, now.Format(time.RFC3339), id)
+	return err
+}

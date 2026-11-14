@@ -24,7 +24,7 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	}
 	if err := migrate(ctx, sqlDB); err != nil {
 		if closeErr := sqlDB.Close(); closeErr != nil {
-			log.Ctx(ctx).Error().Err(closeErr).Msgf("cannot close sqlite %s after failed migration", path)
+			log.Error().Ctx(ctx).Err(closeErr).Msgf("cannot close sqlite %s after failed migration", path)
 		}
 		return nil, err
 	}

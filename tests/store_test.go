@@ -106,47 +106,40 @@ func (s *StoreTestSuite) TestSecondPostForSameArticleFails() {
 	sourceID := s.insertSource(feedURL, domain.SourceActive)
 	articleID := s.insertArticle(sourceID, "https://example.com/a", s.Clock.Now())
 	runID := s.insertRun(domain.RunStatusRunning)
-	post := domain.Post{ArticleID: domain.ArticleID(articleID), RunID: domain.RunID(runID), ChannelID: "C1", MessageTS: "1.1"}
-	repo := repository.NewPost(s.DB)
-	_, err := repo.Create(s.Ctx, post, s.Clock.Now())
-	s.Require().NoError(err)
+	s.insertPost(articleID, runID)
+	post := domain.Post{ArticleID: domain.ArticleID(articleID), RunID: domain.RunID(runID), ChannelID: "C1", MessageTS: "2.2"}
 
-	post.MessageTS = "2.2"
-	_, err = repo.Create(s.Ctx, post, s.Clock.Now())
+	_, err := repository.NewPost(s.DB).Create(s.Ctx, post, s.Clock.Now())
 
 	s.Error(err)
 	s.Equal(1, s.CountRows("post"))
 }
 
 func (s *StoreTestSuite) TestCreateRevivesDeletedSource() {
-	repo := repository.NewSource(s.DB)
+	sourceID := s.insertSource(feedURL, domain.SourceActive)
+	s.Require().NoError(s.sources.MarkDeleted(s.Ctx, sourceID, s.Clock.Now()))
 	source := domain.Source{
 		SiteURL: "https://example.com", FeedURL: feedURL, Title: "Example",
 		Status: domain.SourceActive, Origin: domain.OriginUser,
 	}
-	created, err := repo.Create(s.Ctx, source, s.Clock.Now())
-	s.Require().NoError(err)
-	s.Require().NoError(repo.Delete(s.Ctx, created.ID, s.Clock.Now()))
 
-	revived, err := repo.Create(s.Ctx, source, s.Clock.Now())
+	revived, err := repository.NewSource(s.DB).Create(s.Ctx, source, s.Clock.Now())
 
 	s.Require().NoError(err)
-	s.Equal(created.ID, revived.ID)
+	s.Equal(domain.SourceID(sourceID), revived.ID)
 	deletedAt, err := s.sources.DeletedAt(s.Ctx, int64(revived.ID))
 	s.Require().NoError(err)
 	s.False(deletedAt.Valid)
 }
 
 func (s *StoreTestSuite) TestCreateKnownSourceFails() {
-	repo := repository.NewSource(s.DB)
+	s.insertSource(feedURL, domain.SourceActive)
 	source := domain.Source{
 		SiteURL: "https://example.com", FeedURL: feedURL, Title: "Example",
 		Status: domain.SourceActive, Origin: domain.OriginUser,
 	}
-	_, err := repo.Create(s.Ctx, source, s.Clock.Now())
-	s.Require().NoError(err)
 
-	_, err = repo.Create(s.Ctx, source, s.Clock.Now())
+	_, err := repository.NewSource(s.DB).Create(s.Ctx, source, s.Clock.Now())
 
 	s.ErrorIs(err, domain.ErrAlreadyExists)
 }
