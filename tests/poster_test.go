@@ -77,3 +77,47 @@ func (s *PosterTestSuite) TestTextFailsWhenSlackFails() {
 
 	s.Require().Error(s.poster.Text(s.T().Context(), "hi"))
 }
+
+func (s *PosterTestSuite) TestPickEscapesSourceDescriptionAndReason() {
+	a := domain.Article{URL: posterURL, Title: posterTitle, SourceTitle: "<!channel>"}
+
+	_, _, err := s.poster.Pick(s.T().Context(), a, domain.Pick{Description: "<!here> & more", Reason: "<@U123>"})
+
+	s.Require().NoError(err)
+	text := s.fake.Posted()[0]
+	s.Contains(text, "&lt;!channel&gt;")
+	s.Contains(text, "&lt;!here&gt; &amp; more")
+	s.Contains(text, "&lt;@U123&gt;")
+	s.NotContains(text, "<!channel>")
+	s.NotContains(text, "<!here>")
+	s.NotContains(text, "<@U123>")
+}
+
+func (s *PosterTestSuite) TestPickKeepsUrlInsideItsLink() {
+	a := domain.Article{URL: "https://example.com/a|b>c d?x=1&y=2", Title: posterTitle, SourceTitle: posterSource}
+
+	_, _, err := s.poster.Pick(s.T().Context(), a, domain.Pick{Description: "d", Reason: "r"})
+
+	s.Require().NoError(err)
+	s.Contains(s.fake.Posted()[0], "*<https://example.com/a%7Cb&gt;c%20d?x=1&amp;y=2|First post>*")
+}
+
+func (s *PosterTestSuite) TestPickRefusesNonHttpUrl() {
+	a := domain.Article{URL: "javascript:alert(1)", Title: posterTitle, SourceTitle: posterSource}
+
+	_, _, err := s.poster.Pick(s.T().Context(), a, domain.Pick{Description: "d", Reason: "r"})
+
+	s.Require().Error(err)
+	s.Empty(s.fake.Posted())
+}
+
+func (s *PosterTestSuite) TestPickReturnsPostWhenReactionFails() {
+	s.fake.FailMethod = "reactions.add"
+
+	ts, channel, err := s.poster.Pick(s.T().Context(), s.article(posterTitle), domain.Pick{Description: "d", Reason: "r"})
+
+	s.Require().Error(err)
+	s.Equal("1.000100", ts)
+	s.Equal(posterChannelID, channel)
+	s.Len(s.fake.Posted(), 1)
+}

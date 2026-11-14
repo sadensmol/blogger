@@ -10,7 +10,14 @@ import (
 	"github.com/sadensmol/blogger/internal/domain"
 )
 
-var escaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+var (
+	escaper    = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+	urlEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "|", "%7C", " ", "%20", "\t", "%09", "\n", "%0A", "\r", "%0D")
+)
+
+func Escape(s string) string {
+	return escaper.Replace(s)
+}
 
 type Poster struct {
 	api       *slack.Client
@@ -30,8 +37,11 @@ func (p *Poster) Text(ctx context.Context, text string) error {
 }
 
 func (p *Poster) Pick(ctx context.Context, a domain.Article, pk domain.Pick) (string, string, error) {
+	if !strings.HasPrefix(string(a.URL), "http://") && !strings.HasPrefix(string(a.URL), "https://") {
+		return "", "", fmt.Errorf("cannot post pick %q: url scheme must be http or https", a.URL)
+	}
 	text := fmt.Sprintf("*<%s|%s>*\n%s\n_%s · %s_",
-		a.URL, escaper.Replace(a.Title), escaper.Replace(pk.Description), a.SourceTitle, escaper.Replace(pk.Reason))
+		urlEscaper.Replace(string(a.URL)), Escape(a.Title), Escape(pk.Description), Escape(a.SourceTitle), Escape(pk.Reason))
 
 	channel, ts, err := p.api.PostMessageContext(ctx, p.channelID,
 		slack.MsgOptionText(text, false),
@@ -45,7 +55,7 @@ func (p *Poster) Pick(ctx context.Context, a domain.Article, pk domain.Pick) (st
 	ref := slack.NewRefToMessage(channel, ts)
 	for _, name := range []string{"+1", "-1"} {
 		if err := p.api.AddReactionContext(ctx, name, ref); err != nil {
-			return "", "", fmt.Errorf("cannot add reaction %s to pick %s: %w", name, a.URL, err)
+			return ts, channel, fmt.Errorf("cannot add reaction %s to pick %s: %w", name, a.URL, err)
 		}
 	}
 	return ts, channel, nil
