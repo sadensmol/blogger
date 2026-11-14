@@ -70,11 +70,49 @@ The board changes only through Docker images.
 1. `make deploy-local` builds the image on the Mac for `linux/arm64`. It sends the image to the board over SSH. It pins the board to the tag `local-<sha>`. Use it for a change that CI has not built yet.
 2. `make deploy-ci` points the board back at the CI images (`:latest`) and starts them.
 
-Both commands copy `deploy/compose.yaml` and `deploy/settings.env`. They never read or copy a secret.
+Both commands copy `deploy/compose.yaml`, `deploy/settings.env` and `deploy/updater.sh`. They never read or copy a secret.
+
+The `updater` container runs next to the bot. It checks for a new CI image every 5 minutes (see section 6). A manual `make deploy-local` pins the board, so the updater then does nothing.
 
 ## 6. CI/CD and automatic updates
 
-Coming next: GitHub Actions builds `ghcr.io/sadensmol/blogger`. The board updater pulls it.
+### What CI does
+
+The workflow `.github/workflows/ci.yml` runs on every push and pull request:
+
+- `test` runs `go vet` and `go test -race`.
+- `secret-scan` runs gitleaks over the full git history.
+- `image` runs only on a push to `main`, after both jobs pass. It builds the `linux/arm64` image on a native arm64 runner. It pushes `ghcr.io/sadensmol/blogger:latest` and `ghcr.io/sadensmol/blogger:sha-<short sha>`.
+
+CI uses only the built-in `GITHUB_TOKEN`. It needs no other secret.
+
+### One-time steps for you
+
+1. Create the public GitHub repo `sadensmol/blogger`. Tell Claude when it may push. Claude does not push before your go.
+2. Wait for the first `image` job on `main` to finish.
+3. Make the package public, so the board can pull it without a login. Open the package page on GitHub, then Package settings, then Change visibility. Guide: https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility
+4. Run `make deploy-ci`. It copies the compose file and `updater.sh` to the board and starts both containers.
+
+### How the board updates
+
+The `updater` container reads `~/blogger/image.tag` every 5 minutes.
+
+- No file, or the content is `latest`: it pulls `ghcr.io/sadensmol/blogger:latest`. It restarts `blogger` only when the pulled image differs from the running one.
+- Any other content, for example `local-abc1234`: a manual deploy pinned the board. The updater does nothing. It logs one line when this state starts.
+
+The updater never reads `.env` and never restarts itself. It works in the folder it starts from, which is `~/blogger`. Always run `docker compose` from `~/blogger`.
+
+### Build on the Mac and install by hand
+
+`make deploy-local` builds the image on the Mac and loads it into the board Docker over SSH. It writes `local-<sha>` to `image.tag`. A dirty working tree adds `-dirty`. The updater then leaves the board alone. `make deploy-ci` writes `latest` to `image.tag` and the updater follows CI again.
+
+### See what runs on the board
+
+```sh
+ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 lockbox@lockbox-nv.local 'timeout 20 sh -c "cat ~/blogger/image.tag; docker inspect -f {{.Config.Image}} blogger; docker logs --tail 20 blogger-updater"'
+```
+
+The `blogger` log also prints the build tag (`sha-<short sha>` or `local-<sha>`) at start.
 
 ## 7. Troubleshooting
 

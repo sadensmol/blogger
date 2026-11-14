@@ -7,6 +7,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=${TAG}" -o /out/blogger ./cmd/blogger
 
 FROM debian:trixie-slim
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG UID=1000
 ARG CLAUDE_VERSION=2.1.318
 ARG CODEX_VERSION=0.169.0

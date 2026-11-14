@@ -13,6 +13,19 @@ services:
     logging:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
+  updater:
+    image: docker:28-cli
+    container_name: blogger-updater
+    restart: unless-stopped
+    entrypoint: ["sh", "./updater.sh"]
+    working_dir: ${PWD}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same path inside and outside, so compose bind mounts resolve on the host.
+      - ${PWD}:${PWD}
+    logging:
+      driver: json-file
+      options: {max-size: "1m", max-file: "2"}
   ollama:
     profiles: [local]
     image: ollama/ollama:latest

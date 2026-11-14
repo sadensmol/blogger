@@ -12,7 +12,7 @@ board() {
   ssh -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$HOST" "timeout ${secs} $*"
 }
 
-scp -o ConnectTimeout=5 deploy/compose.yaml deploy/settings.env "${HOST}:blogger/"
+scp -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 deploy/compose.yaml deploy/settings.env deploy/updater.sh "${HOST}:blogger/"
 board 20 "sh -c 'echo latest > ~/blogger/image.tag'"
-board 300 "sh -c 'cd ~/blogger && BLOGGER_IMAGE_TAG=latest docker compose pull blogger && BLOGGER_IMAGE_TAG=latest docker compose up -d'"
+board 300 "sh -c 'cd ~/blogger && export BLOGGER_IMAGE_TAG=\$(cat image.tag 2>/dev/null || echo latest) && docker compose pull blogger && docker compose up -d'"
 board 20 "docker logs --tail 50 blogger"
