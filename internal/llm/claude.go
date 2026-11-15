@@ -33,6 +33,46 @@ type claudeEnvelope struct {
 	StructuredOutput json.RawMessage `json:"structured_output"`
 }
 
+// claudeUsage is apart from claudeEnvelope: a usage field of an unexpected shape must not fail the answer.
+type claudeUsage struct {
+	Usage *struct {
+		InputTokens              int64 `json:"input_tokens"`
+		CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+		OutputTokens             int64 `json:"output_tokens"`
+	} `json:"usage"`
+	ModelUsage map[string]struct {
+		InputTokens              int64 `json:"inputTokens"`
+		CacheCreationInputTokens int64 `json:"cacheCreationInputTokens"`
+		CacheReadInputTokens     int64 `json:"cacheReadInputTokens"`
+		OutputTokens             int64 `json:"outputTokens"`
+	} `json:"modelUsage"`
+}
+
+func (c *ClaudeBackend) Usage(ctx context.Context, job Job) (int64, int64, error) {
+	raw, err := readAgentFile(ctx, filepath.Join(job.Dir, stdoutFile))
+	if err != nil {
+		return 0, 0, fmt.Errorf("cannot read claude output: %w", err)
+	}
+	var report claudeUsage
+	if err := json.Unmarshal(raw, &report); err != nil {
+		return 0, 0, fmt.Errorf("cannot decode claude usage: %w", err)
+	}
+
+	if len(report.ModelUsage) > 0 {
+		var input, output int64
+		for _, model := range report.ModelUsage {
+			input += model.InputTokens + model.CacheCreationInputTokens + model.CacheReadInputTokens
+			output += model.OutputTokens
+		}
+		return input, output, nil
+	}
+	if usage := report.Usage; usage != nil {
+		return usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens, usage.OutputTokens, nil
+	}
+	return 0, 0, fmt.Errorf("claude output has no usage: %w", domain.ErrBadOutput)
+}
+
 func (c *ClaudeBackend) Answer(ctx context.Context, job Job) ([]byte, error) {
 	schema, err := os.ReadFile(filepath.Join(job.Dir, schemaFile))
 	if err != nil {

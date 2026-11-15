@@ -9,10 +9,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/sadensmol/blogger/internal/app"
@@ -40,7 +42,79 @@ const (
 	slackBlogTitle  = "Tom & <Jerry>"
 	slackAbout      = "Writes about Go & <SQL>."
 	slackAdded      = "Added ✓"
+	slackBusy       = "Busy right now, try again in a few minutes."
+
+	tokenLinePrefix       = "Tokens used:"
+	tokenLineNoCall       = "Tokens used: 0 (no LLM call)"
+	tokenLineOneClaudeRun = "Tokens used: 41,181 (claude: 41,055 in, 126 out)"
+	maxSectionRunes       = 3000
 )
+
+type slackMessage struct {
+	Text   string       `json:"text"`
+	Blocks []slackBlock `json:"blocks"`
+}
+
+type slackBlock struct {
+	Type string `json:"type"`
+	Text struct {
+		Text string `json:"text"`
+	} `json:"text"`
+	Elements []struct {
+		Text string `json:"text"`
+	} `json:"elements"`
+}
+
+func parseSlackMessage(t *testing.T, raw string) slackMessage {
+	t.Helper()
+
+	var msg slackMessage
+	require.NoError(t, json.Unmarshal([]byte(raw), &msg))
+	return msg
+}
+
+func requireTokenLineBlock(t *testing.T, block slackBlock, tokenLine string) {
+	t.Helper()
+
+	require.Equal(t, string(slack.MBTContext), block.Type)
+	require.Len(t, block.Elements, 1)
+	require.Equal(t, tokenLine, block.Elements[0].Text)
+}
+
+// requireTextThenTokenLine checks a message that keeps text, shows it in sections of at most 3000 characters cut at
+// line ends, and ends with one context block that holds the token line.
+func requireTextThenTokenLine(t *testing.T, raw, text, tokenLine string) {
+	t.Helper()
+
+	msg := parseSlackMessage(t, raw)
+	require.Equal(t, text, msg.Text)
+	require.GreaterOrEqual(t, len(msg.Blocks), 2, "the text sections and the token line")
+	sections := make([]string, 0, len(msg.Blocks)-1)
+	for _, block := range msg.Blocks[:len(msg.Blocks)-1] {
+		require.Equal(t, string(slack.MBTSection), block.Type)
+		require.LessOrEqual(t, utf8.RuneCountInString(block.Text.Text), maxSectionRunes)
+		sections = append(sections, block.Text.Text)
+	}
+	require.Equal(t, text, strings.Join(sections, "\n"))
+	requireTokenLineBlock(t, msg.Blocks[len(msg.Blocks)-1], tokenLine)
+}
+
+func requireOnlyTokenLine(t *testing.T, raw, tokenLine string) {
+	t.Helper()
+
+	msg := parseSlackMessage(t, raw)
+	require.Len(t, msg.Blocks, 1)
+	requireTokenLineBlock(t, msg.Blocks[0], tokenLine)
+	require.Contains(t, []string{"", tokenLine}, msg.Text)
+}
+
+func requireNoTokenLine(t *testing.T, raw string) {
+	t.Helper()
+
+	msg := parseSlackMessage(t, raw)
+	require.Empty(t, msg.Blocks)
+	require.NotContains(t, msg.Text, tokenLinePrefix)
+}
 
 type SlackTestSuite struct {
 	tests.Suite
@@ -149,6 +223,16 @@ func (s *SlackTestSuite) ack(cmd slack.SlashCommand) string {
 	text, ok := s.handler.SlashCommand(s.Ctx, cmd)["text"].(string)
 	s.Require().True(ok)
 	return text
+}
+
+func (s *SlackTestSuite) ackPayload(handler *controllerslack.Handler, cmd slack.SlashCommand) string {
+	raw, err := json.Marshal(handler.SlashCommand(s.Ctx, cmd))
+	s.Require().NoError(err)
+	return string(raw)
+}
+
+func (s *SlackTestSuite) replyURL() string {
+	return fmt.Sprintf("%s/response/r1", s.slack.URL)
 }
 
 func (s *SlackTestSuite) insertBlogWithArticle() int64 {
@@ -501,6 +585,8 @@ func (s *SlackTestSuite) TestOwnerAddClickAddsBlogAndMarksIt() {
 	s.setGoodFeed(second)
 	s.answerBlogs(first, second)
 	s.discover()
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	discoverReplies := s.slack.Replies()
 
 	s.click(slackOwnerID, digestChannelID, s.listProposals()[0].ID)
 
@@ -519,7 +605,7 @@ func (s *SlackTestSuite) TestOwnerAddClickAddsBlogAndMarksIt() {
 	s.Contains(sections[0].Text.Text, slackAdded)
 	s.Require().NotNil(sections[1].Accessory)
 	s.NotContains(sections[1].Text.Text, slackAdded)
-	s.Empty(s.slack.Replies())
+	s.Equal(discoverReplies, s.slack.Replies())
 }
 
 func (s *SlackTestSuite) TestSecondAddClickAddsNoDuplicate() {
@@ -528,14 +614,15 @@ func (s *SlackTestSuite) TestSecondAddClickAddsNoDuplicate() {
 	s.setGoodFeed(good)
 	s.answerBlogs(good)
 	s.discover()
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
 	proposalID := s.listProposals()[0].ID
 	s.click(slackOwnerID, digestChannelID, proposalID)
 
 	s.click(slackOwnerID, digestChannelID, proposalID)
 
 	s.Equal(2, s.CountRows("source"))
-	s.Require().Len(s.slack.Replies(), 1)
-	s.Contains(s.slack.Replies()[0], "Already in the list.")
+	s.Require().Len(s.slack.Replies(), 2)
+	s.Contains(s.slack.Replies()[1], "Already in the list.")
 }
 
 func (s *SlackTestSuite) TestAddClickOfAnotherUserIsIgnored() {
@@ -544,13 +631,15 @@ func (s *SlackTestSuite) TestAddClickOfAnotherUserIsIgnored() {
 	s.setGoodFeed(good)
 	s.answerBlogs(good)
 	s.discover()
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	discoverReplies := s.slack.Replies()
 
 	s.click(slackOtherUser, digestChannelID, s.listProposals()[0].ID)
 
 	s.Equal(1, s.CountRows("source"))
 	s.Equal(string(domain.ProposalProposed), s.listProposals()[0].Status)
 	s.Empty(s.slack.Updates())
-	s.Empty(s.slack.Replies())
+	s.Equal(discoverReplies, s.slack.Replies())
 }
 
 func (s *SlackTestSuite) TestDiscoverNeverUsesCodexOSS() {
@@ -646,4 +735,228 @@ func (s *SlackTestSuite) TestClickThroughSocketModeIsAckedAndAddsBlog() {
 	s.Require().NoError(err)
 	s.Equal(string(domain.SourceActive), detail.Status)
 	s.Equal(string(domain.ProposalAdded), s.listProposals()[0].Status)
+}
+
+func (s *SlackTestSuite) TestShowThroughCommandRepliesWithOnlyTheTokenLine() {
+	s.insertBlogWithArticle()
+
+	s.Equal(slackPicking, s.ack(s.ownerCommand("/show", "")))
+
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	s.Contains(s.slack.Posted(), slackShowHeader)
+	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineOneClaudeRun)
+}
+
+func (s *SlackTestSuite) TestDiscoverThroughCommandRepliesWithOnlyTheTokenLine() {
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+
+	s.discover()
+
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	s.Require().Len(s.listProposals(), 1)
+	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineOneClaudeRun)
+}
+
+func (s *SlackTestSuite) TestDiscoverWithoutNewBlogsRepliesWithTheTokenLine() {
+	s.insertBlogWithArticle()
+	s.answerBlogs(slackFeedPath, deadFeedPath)
+
+	err := s.newApp(llm.Claude).Suggest.Run(s.Ctx, s.replyURL())
+
+	s.Require().NoError(err)
+	s.Equal([]string{"Found no new blogs that can be read. Try again later."}, s.slack.Posted())
+	s.Require().Len(s.slack.Replies(), 1)
+	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineOneClaudeRun)
+}
+
+func (s *SlackTestSuite) TestDiscoverWithoutBlogsRepliesWithZeroTokens() {
+	err := s.newApp(llm.Claude).Suggest.Run(s.Ctx, s.replyURL())
+
+	s.Require().NoError(err)
+	s.Equal([]string{"No blogs yet. Add one with /blogs add <url>."}, s.slack.Posted())
+	s.Require().Len(s.slack.Replies(), 1)
+	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineNoCall)
+}
+
+func (s *SlackTestSuite) TestDiscoverPostFailureRepliesWithTheReasonAboveTheTokenLine() {
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+	s.slack.PostFaults = []tests.PostFault{tests.PostRejected}
+
+	err := s.newApp(llm.Claude).Suggest.Run(s.Ctx, s.replyURL())
+
+	s.Require().Error(err)
+	s.Require().Len(s.slack.Replies(), 1)
+	requireTextThenTokenLine(s.T(), s.slack.Replies()[0], "Could not post: the channel was not found. Check SLACK_CHANNEL_ID.", tokenLineOneClaudeRun)
+}
+
+func (s *SlackTestSuite) TestDiscoverWithoutWebAgentRepliesWithZeroTokens() {
+	s.insertBlogWithArticle()
+
+	err := s.newApp(llm.CodexOSS).Suggest.Run(s.Ctx, s.replyURL())
+
+	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
+	s.Require().Len(s.slack.Replies(), 1)
+	requireTextThenTokenLine(s.T(), s.slack.Replies()[0],
+		"Could not look for blogs: no agent with web search answered. See the logs.", tokenLineNoCall)
+}
+
+func (s *SlackTestSuite) TestInstantAnswersAddTheZeroTokenLine() {
+	otherUser := s.ownerCommand("/blogs", "list")
+	otherUser.UserID = slackOtherUser
+	showElsewhere := s.ownerCommand("/show", "")
+	showElsewhere.ChannelID = "C2"
+	discoverElsewhere := s.ownerCommand("/discover", "")
+	discoverElsewhere.ChannelID = "C2"
+	usage := "usage: list | add &lt;url&gt; | remove &lt;id|url&gt; | pause &lt;id|url&gt; | resume &lt;id|url&gt;"
+	cases := []struct {
+		name string
+		cmd  slack.SlashCommand
+		text string
+	}{
+		{name: "owner only refusal", cmd: otherUser, text: slackOwnerOnly},
+		{name: "show in another channel", cmd: showElsewhere, text: fmt.Sprintf("Use /show in <#%s>.", digestChannelID)},
+		{name: "discover in another channel", cmd: discoverElsewhere, text: fmt.Sprintf("Use /discover in <#%s>.", digestChannelID)},
+		{name: "blogs help", cmd: s.ownerCommand("/blogs", "help"), text: usage},
+		{name: "blogs without text", cmd: s.ownerCommand("/blogs", ""), text: usage},
+		{name: "bad blogs text", cmd: s.ownerCommand("/blogs", "frobnicate now"), text: usage},
+		{name: "empty blogs list", cmd: s.ownerCommand("/blogs", "list"), text: "No blogs yet."},
+		{name: "remove of an unknown blog", cmd: s.ownerCommand("/blogs", "remove foo"), text: "No blog matches foo."},
+		{name: "unknown command", cmd: s.ownerCommand("/frob", ""), text: "Unknown command /frob."},
+	}
+	for _, tt := range cases {
+		s.Run(tt.name, func() {
+			requireTextThenTokenLine(s.T(), s.ackPayload(s.handler, tt.cmd), tt.text, tokenLineNoCall)
+		})
+	}
+}
+
+func (s *SlackTestSuite) TestBlogsListAndChangesAddTheZeroTokenLine() {
+	sourceID, _ := s.insertPost()
+
+	list := s.ackPayload(s.handler, s.ownerCommand("/blogs", "list"))
+	pause := s.ackPayload(s.handler, s.ownerCommand("/blogs", fmt.Sprintf("pause %d", sourceID)))
+	resume := s.ackPayload(s.handler, s.ownerCommand("/blogs", fmt.Sprintf("resume %d", sourceID)))
+	remove := s.ackPayload(s.handler, s.ownerCommand("/blogs", fmt.Sprintf("remove %d", sourceID)))
+
+	listText := parseSlackMessage(s.T(), list).Text
+	s.Contains(listText, blogTitle)
+	requireTextThenTokenLine(s.T(), list, listText, tokenLineNoCall)
+	requireTextThenTokenLine(s.T(), pause, fmt.Sprintf("Paused #%d %s.", sourceID, blogTitle), tokenLineNoCall)
+	requireTextThenTokenLine(s.T(), resume, fmt.Sprintf("Resumed #%d %s.", sourceID, blogTitle), tokenLineNoCall)
+	requireTextThenTokenLine(s.T(), remove, fmt.Sprintf("Removed #%d %s.", sourceID, blogTitle), tokenLineNoCall)
+}
+
+func (s *SlackTestSuite) TestLongBlogsListIsCutIntoSectionsAtLineEnds() {
+	const blogs = 40
+	for i := range blogs {
+		_, err := s.sources.Insert(s.Ctx, testsrepository.SourceRow{
+			FeedURL: fmt.Sprintf("%s/long-%d.xml", s.feeds.URL(), i),
+			Title:   fmt.Sprintf("%d %s & co", i, strings.Repeat("t", 120)),
+			Status:  string(domain.SourceActive),
+		}, s.Clock.Now())
+		s.Require().NoError(err)
+	}
+
+	raw := s.ackPayload(s.handler, s.ownerCommand("/blogs", "list"))
+
+	text := parseSlackMessage(s.T(), raw).Text
+	s.Greater(utf8.RuneCountInString(text), 2*maxSectionRunes)
+	s.Len(strings.Split(text, "\n"), blogs)
+	requireTextThenTokenLine(s.T(), raw, text, tokenLineNoCall)
+	s.GreaterOrEqual(len(parseSlackMessage(s.T(), raw).Blocks), 4)
+}
+
+func (s *SlackTestSuite) TestQueuedAnswersAddTheZeroTokenLine() {
+	s.insertBlogWithArticle()
+	s.answerBlogs(slackFeedPath)
+	s.agents.Sleep(llm.Claude, 2)
+	s.Equal(slackPicking, s.ack(s.ownerCommand("/show", "")))
+
+	onItsWay := s.ackPayload(s.handler, s.ownerCommand("/show", ""))
+	s.Equal(slackLooking, s.ack(s.ownerCommand("/discover", "")))
+	alreadyLooking := s.ackPayload(s.handler, s.ownerCommand("/discover", ""))
+
+	requireTextThenTokenLine(s.T(), onItsWay, "A digest is already on its way.", tokenLineNoCall)
+	requireTextThenTokenLine(s.T(), alreadyLooking, "Already looking for blogs.", tokenLineNoCall)
+}
+
+func (s *SlackTestSuite) TestBusyAnswerAddsTheZeroTokenLine() {
+	app := s.newApp(llm.Claude)
+	handler := controllerslack.NewHandler(controllerslack.HandlerData{
+		Jobs:       usecase.NewJobs(app.JobsData(0)),
+		Suggest:    app.Suggest,
+		Sources:    app.Sources,
+		Votes:      app.Votes,
+		Poster:     app.Poster,
+		ChannelID:  digestChannelID,
+		OwnerID:    slackOwnerID,
+		Background: s.Ctx,
+	})
+
+	raw := s.ackPayload(handler, s.ownerCommand("/show", ""))
+
+	requireTextThenTokenLine(s.T(), raw, slackBusy, tokenLineNoCall)
+}
+
+func (s *SlackTestSuite) TestBlogsAddReplyEndsWithTheTokenLine() {
+	s.feeds.Set(blogPath, htmlType, pageHTML)
+	s.feeds.Set(feedPath, rssType, fmt.Sprintf(feedXMLFmt, blogTitle, s.feeds.URL()+blogPath, s.feeds.URL()))
+
+	s.ack(s.ownerCommand("/blogs", fmt.Sprintf("add <%s%s>", s.feeds.URL(), blogPath)))
+
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	text := parseSlackMessage(s.T(), s.slack.Replies()[0]).Text
+	s.True(strings.HasPrefix(text, fmt.Sprintf("Added #1 %s (", blogTitle)), text)
+	requireTextThenTokenLine(s.T(), s.slack.Replies()[0], text, tokenLineNoCall)
+}
+
+func (s *SlackTestSuite) TestBlogsAddOfAKnownBlogRepliesAlreadyInTheListWithTheTokenLine() {
+	s.feeds.Set(blogPath, htmlType, pageHTML)
+	s.feeds.Set(feedPath, rssType, fmt.Sprintf(feedXMLFmt, blogTitle, s.feeds.URL()+blogPath, s.feeds.URL()))
+	_, err := s.sources.Insert(s.Ctx, testsrepository.SourceRow{
+		FeedURL: fmt.Sprintf("%s%s", s.feeds.URL(), feedPath), Title: blogTitle, Status: string(domain.SourceActive),
+	}, s.Clock.Now())
+	s.Require().NoError(err)
+
+	s.ack(s.ownerCommand("/blogs", fmt.Sprintf("add <%s%s>", s.feeds.URL(), blogPath)))
+
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	requireTextThenTokenLine(s.T(), s.slack.Replies()[0], "Already in the list.", tokenLineNoCall)
+}
+
+func (s *SlackTestSuite) TestBlogsAddOfAPageWithoutFeedRepliesNotFoundWithTheTokenLine() {
+	const barePath = "/bare"
+	s.feeds.Set(barePath, htmlType, "<html></html>")
+	bareURL := fmt.Sprintf("%s%s", s.feeds.URL(), barePath)
+
+	s.ack(s.ownerCommand("/blogs", fmt.Sprintf("add <%s>", bareURL)))
+
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	requireTextThenTokenLine(s.T(), s.slack.Replies()[0],
+		fmt.Sprintf("No feed and too few articles found at %s.", bareURL), tokenLineNoCall)
+}
+
+func (s *SlackTestSuite) TestAddClickReplySendsNoTokenLine() {
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+	s.discover()
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineOneClaudeRun)
+	proposalID := s.listProposals()[0].ID
+	s.click(slackOwnerID, digestChannelID, proposalID)
+
+	s.click(slackOwnerID, digestChannelID, proposalID)
+
+	replies := s.slack.Replies()
+	s.Require().Len(replies, 2)
+	s.Equal("Already in the list.", parseSlackMessage(s.T(), replies[1]).Text)
+	requireNoTokenLine(s.T(), replies[1])
 }

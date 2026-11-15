@@ -12,6 +12,7 @@ import (
 
 	controllertext "github.com/sadensmol/blogger/internal/controller/text"
 	"github.com/sadensmol/blogger/internal/domain"
+	"github.com/sadensmol/blogger/internal/llm"
 	"github.com/sadensmol/blogger/internal/service"
 	"github.com/sadensmol/blogger/internal/slackpost"
 	"github.com/sadensmol/blogger/internal/usecase"
@@ -92,14 +93,20 @@ func NewHandler(d HandlerData) *Handler {
 }
 
 // SlashCommand returns the ack payload at once; it never waits on the network.
+// An answer that only starts a job has no token line: the job's own reply carries it.
 func (h *Handler) SlashCommand(ctx context.Context, cmd slack.SlashCommand) map[string]any {
-	return map[string]any{"response_type": slack.ResponseTypeEphemeral, "text": h.answer(ctx, cmd)}
+	text, jobStarted := h.answer(ctx, cmd)
+	payload := map[string]any{"response_type": slack.ResponseTypeEphemeral, "text": text}
+	if !jobStarted {
+		payload["blocks"] = slackpost.UsageBlocks(text, domain.TokenUsage{})
+	}
+	return payload
 }
 
-func (h *Handler) answer(ctx context.Context, cmd slack.SlashCommand) string {
+func (h *Handler) answer(ctx context.Context, cmd slack.SlashCommand) (string, bool) {
 	if cmd.UserID != h.ownerID {
 		log.Ctx(ctx).Info().Msgf("refused %s from user %s", cmd.Command, cmd.UserID)
-		return ownerOnlyText
+		return ownerOnlyText, false
 	}
 	switch cmd.Command {
 	case "/show":
@@ -110,60 +117,60 @@ func (h *Handler) answer(ctx context.Context, cmd slack.SlashCommand) string {
 		return h.discover(ctx, cmd)
 	default:
 		log.Ctx(ctx).Warn().Msgf("unknown slash command %s", cmd.Command)
-		return fmt.Sprintf("Unknown command %s.", slackpost.Escape(cmd.Command))
+		return fmt.Sprintf("Unknown command %s.", slackpost.Escape(cmd.Command)), false
 	}
 }
 
-func (h *Handler) show(ctx context.Context, cmd slack.SlashCommand) string {
+func (h *Handler) show(ctx context.Context, cmd slack.SlashCommand) (string, bool) {
 	if cmd.ChannelID != h.channelID {
-		return fmt.Sprintf("Use /show in <#%s>.", h.channelID)
+		return fmt.Sprintf("Use /show in <#%s>.", h.channelID), false
 	}
 	result := h.jobs.Submit(usecase.Job{Kind: usecase.JobShowDigest, ReplyURL: cmd.ResponseURL})
 	log.Ctx(ctx).Info().Msgf("/show from %s in %s: %s", cmd.UserID, cmd.ChannelID, result)
 	switch result {
 	case usecase.Queued:
-		return pickingText
+		return pickingText, true
 	case usecase.AlreadyQueued:
-		return onItsWayText
+		return onItsWayText, false
 	case usecase.Busy:
-		return busyText
+		return busyText, false
 	}
-	return controllertext.Failed
+	return controllertext.Failed, false
 }
 
-func (h *Handler) discover(ctx context.Context, cmd slack.SlashCommand) string {
+func (h *Handler) discover(ctx context.Context, cmd slack.SlashCommand) (string, bool) {
 	if cmd.ChannelID != h.channelID {
-		return fmt.Sprintf("Use /discover in <#%s>.", h.channelID)
+		return fmt.Sprintf("Use /discover in <#%s>.", h.channelID), false
 	}
 	result := h.jobs.Submit(usecase.Job{Kind: usecase.JobSuggest, ReplyURL: cmd.ResponseURL})
 	log.Ctx(ctx).Info().Msgf("/discover from %s in %s: %s", cmd.UserID, cmd.ChannelID, result)
 	switch result {
 	case usecase.Queued:
-		return lookingText
+		return lookingText, true
 	case usecase.AlreadyQueued:
-		return alreadyLookingText
+		return alreadyLookingText, false
 	case usecase.Busy:
-		return busyText
+		return busyText, false
 	}
-	return controllertext.Failed
+	return controllertext.Failed, false
 }
 
-func (h *Handler) blogs(ctx context.Context, cmd slack.SlashCommand) string {
+func (h *Handler) blogs(ctx context.Context, cmd slack.SlashCommand) (string, bool) {
 	c, err := ParseBlogsCommand(cmd.Text)
 	if err != nil {
 		log.Ctx(ctx).Debug().Err(err).Msgf("bad /blogs text %q", cmd.Text)
-		return slackpost.Escape(controllertext.BlogsUsage)
+		return slackpost.Escape(controllertext.BlogsUsage), false
 	}
 	switch c.Action {
 	case "help":
-		return slackpost.Escape(controllertext.BlogsUsage)
+		return slackpost.Escape(controllertext.BlogsUsage), false
 	case "list":
-		return h.listBlogs(ctx)
+		return h.listBlogs(ctx), false
 	case "add":
 		h.addBlogLater(cmd.ResponseURL, c.Arg)
-		return slackpost.Escape(controllertext.Checking(c.Arg))
+		return slackpost.Escape(controllertext.Checking(c.Arg)), true
 	default:
-		return h.changeBlog(ctx, c)
+		return h.changeBlog(ctx, c), false
 	}
 }
 
@@ -218,6 +225,7 @@ func (h *Handler) addBlogLater(responseURL, rawURL string) {
 	h.pending.Go(func() {
 		ctx, cancel := context.WithTimeout(h.background, addTimeout)
 		defer cancel()
+		ctx, meter := llm.WithMeter(ctx)
 
 		src, err := h.sources.Add(ctx, rawURL)
 		text, known := controllertext.AddFailed(err, rawURL)
@@ -229,7 +237,7 @@ func (h *Handler) addBlogLater(responseURL, rawURL string) {
 			log.Ctx(ctx).Error().Err(err).Msgf("/blogs add %s failed", rawURL)
 			text = controllertext.Failed
 		}
-		if err := h.poster.Reply(ctx, responseURL, slackpost.Escape(text)); err != nil {
+		if err := h.poster.ReplyWithUsage(ctx, responseURL, slackpost.Escape(text), meter.Usage()); err != nil {
 			log.Ctx(ctx).Error().Err(err).Msgf("cannot answer /blogs add %s", rawURL)
 		}
 	})

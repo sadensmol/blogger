@@ -65,6 +65,12 @@ func (f *FakeAgents) Answer(backend llm.Backend, skill llm.Skill, obj any) {
 	f.write(fmt.Sprintf("claude.%s.stdout", skill), out)
 }
 
+// CodexUsage sets the turn.completed event that the fake codex prints for the skill when it runs with --json.
+func (f *FakeAgents) CodexUsage(skill llm.Skill, input, output int64) {
+	f.write(fmt.Sprintf("codex.%s.events", skill),
+		fmt.Appendf(nil, "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":%d,\"cached_input_tokens\":0,\"output_tokens\":%d}}\n", input, output))
+}
+
 func (f *FakeAgents) Fail(backend llm.Backend) {
 	f.write(fmt.Sprintf("%s.exit", program(backend)), []byte("1"))
 }

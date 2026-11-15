@@ -48,18 +48,26 @@ func NewSuggest(d SuggestData) *Suggest {
 	}
 }
 
-// Run answers the slash command privately when it fails: a failure never reaches the channel.
+// Run always answers the slash command privately with the tokens it used.
+// A failure puts its reason above them: a failure never reaches the channel.
 func (s *Suggest) Run(ctx context.Context, replyURL string) error {
+	ctx, meter := llm.WithMeter(ctx)
 	err := withRun(ctx, s.runs, domain.RunKindSuggest, func(runID domain.RunID) (llm.Backend, error) {
 		return s.suggest(ctx, runID)
 	})
-	if err == nil {
-		return nil
+	usage := meter.Usage()
+	log.Ctx(ctx).Info().Msgf("%s run: %s", domain.RunKindSuggest, slackpost.UsageText(usage))
+	text := ""
+	if err != nil {
+		text = slackpost.Escape(suggestFailure(err))
 	}
-	if replyErr := s.poster.Reply(ctx, replyURL, slackpost.Escape(suggestFailure(err))); replyErr != nil {
-		log.Ctx(ctx).Error().Err(replyErr).Msg("cannot tell the user why /discover failed")
+	if replyErr := s.poster.ReplyWithUsage(ctx, replyURL, text, usage); replyErr != nil {
+		log.Ctx(ctx).Error().Err(replyErr).Msg("cannot answer /discover")
 	}
-	return fmt.Errorf("cannot suggest blogs: %w", err)
+	if err != nil {
+		return fmt.Errorf("cannot suggest blogs: %w", err)
+	}
+	return nil
 }
 
 // suggestFailure never quotes the error: it may hold a url or a path.

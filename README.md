@@ -182,6 +182,7 @@ Check the log: `H 'timeout 20 docker logs --tail 50 blogger'`. Look for `blogger
 
 - Each morning at `BLOGGER_DIGEST_TIME` the bot posts up to `BLOGGER_DIGEST_SIZE` articles. When nothing is good enough, it posts one short line.
 - Type `/show` for a digest now.
+- Every command answer ends with a small line that shows the LLM tokens the command used.
 - Rate each post with 👍 or 👎. The bot learns your interests from the votes and pauses a blog with many 👎.
 - An article you did not rate may come back after `BLOGGER_REPEAT_AFTER`, at most `BLOGGER_REPEAT_MAX` times. A rated article never comes back.
 - When the bot was off at digest time, or the digest failed, it posts the missed digest when it starts again.
