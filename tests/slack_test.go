@@ -585,6 +585,8 @@ func (s *SlackTestSuite) TestOwnerAddClickAddsBlogAndMarksIt() {
 	s.setGoodFeed(second)
 	s.answerBlogs(first, second)
 	s.discover()
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	discoverReplies := s.slack.Replies()
 
 	s.click(slackOwnerID, digestChannelID, s.listProposals()[0].ID)
 
@@ -603,7 +605,7 @@ func (s *SlackTestSuite) TestOwnerAddClickAddsBlogAndMarksIt() {
 	s.Contains(sections[0].Text.Text, slackAdded)
 	s.Require().NotNil(sections[1].Accessory)
 	s.NotContains(sections[1].Text.Text, slackAdded)
-	s.Empty(s.slack.Replies())
+	s.Equal(discoverReplies, s.slack.Replies())
 }
 
 func (s *SlackTestSuite) TestSecondAddClickAddsNoDuplicate() {
@@ -612,14 +614,15 @@ func (s *SlackTestSuite) TestSecondAddClickAddsNoDuplicate() {
 	s.setGoodFeed(good)
 	s.answerBlogs(good)
 	s.discover()
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
 	proposalID := s.listProposals()[0].ID
 	s.click(slackOwnerID, digestChannelID, proposalID)
 
 	s.click(slackOwnerID, digestChannelID, proposalID)
 
 	s.Equal(2, s.CountRows("source"))
-	s.Require().Len(s.slack.Replies(), 1)
-	s.Contains(s.slack.Replies()[0], "Already in the list.")
+	s.Require().Len(s.slack.Replies(), 2)
+	s.Contains(s.slack.Replies()[1], "Already in the list.")
 }
 
 func (s *SlackTestSuite) TestAddClickOfAnotherUserIsIgnored() {
@@ -628,13 +631,15 @@ func (s *SlackTestSuite) TestAddClickOfAnotherUserIsIgnored() {
 	s.setGoodFeed(good)
 	s.answerBlogs(good)
 	s.discover()
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	discoverReplies := s.slack.Replies()
 
 	s.click(slackOtherUser, digestChannelID, s.listProposals()[0].ID)
 
 	s.Equal(1, s.CountRows("source"))
 	s.Equal(string(domain.ProposalProposed), s.listProposals()[0].Status)
 	s.Empty(s.slack.Updates())
-	s.Empty(s.slack.Replies())
+	s.Equal(discoverReplies, s.slack.Replies())
 }
 
 func (s *SlackTestSuite) TestDiscoverNeverUsesCodexOSS() {
