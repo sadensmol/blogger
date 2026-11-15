@@ -2,8 +2,10 @@ package tests_test
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -247,13 +249,15 @@ func (s *BlogsListTestSuite) TestBlogsListKeepsOldEntriesAndAppendsNewBlogs() {
 func (s *BlogsListTestSuite) TestBlogsListAddsNoSecondEntryForAKnownBlog() {
 	s.requireEveryNewBlog()
 
-	for _, old := range oldBlogs {
-		oldPage, oldFeed := s.parse(old.URL), s.parse(old.Feed)
-		for _, entry := range s.entries {
-			page, feed := s.parse(entry.URL), s.parse(entry.Feed)
-			if page == oldPage {
-				continue
-			}
+	byPage := make(map[domain.URL]blogsListEntry, len(s.entries))
+	for _, entry := range s.entries {
+		byPage[s.parse(entry.URL)] = entry
+	}
+	for _, want := range newBlogs {
+		entry := byPage[s.parse(want.URL)]
+		page, feed := s.parse(entry.URL), s.parse(entry.Feed)
+		for _, old := range oldBlogs {
+			oldPage, oldFeed := s.parse(old.URL), s.parse(old.Feed)
 			if page != awsWhatsNewPage {
 				s.Falsef(page.SameSiteAs(oldPage), "%s shares a host with the old entry %s", page, oldPage)
 			}
@@ -323,22 +327,46 @@ func (s *BlogsListImportTestSuite) SetupTest() {
 }
 
 func (s *BlogsListImportTestSuite) TestImportDryRunOfBlogsListAddsOnlyTheNewBlogs() {
-	for _, old := range oldBlogs {
-		page, err := domain.ParseURL(old.URL)
+	f, err := os.Open(blogsListPath)
+	s.Require().NoError(err)
+	defer func() {
+		s.Require().NoError(f.Close())
+	}()
+	decoder := yaml.NewDecoder(f)
+	decoder.KnownFields(true)
+	var file blogsListFile
+	s.Require().NoError(decoder.Decode(&file))
+
+	listed := make(map[domain.URL]bool, len(oldBlogs)+len(newBlogs))
+	for _, blog := range slices.Concat(oldBlogs, newBlogs) {
+		page, err := domain.ParseURL(blog.URL)
 		s.Require().NoError(err)
-		var oldFeed domain.URL
-		if old.Feed != "" {
-			oldFeed, err = domain.ParseURL(old.Feed)
+		listed[page] = true
+	}
+	board := slices.Clone(oldBlogs)
+	for _, entry := range file.Sources {
+		page, err := domain.ParseURL(entry.URL)
+		s.Require().NoError(err)
+		if !listed[page] {
+			board = append(board, entry)
+		}
+	}
+	for _, blog := range board {
+		page, err := domain.ParseURL(blog.URL)
+		s.Require().NoError(err)
+		var blogFeed domain.URL
+		if blog.Feed != "" {
+			blogFeed, err = domain.ParseURL(blog.Feed)
 			s.Require().NoError(err)
 		}
 		_, err = s.sources.Insert(s.Ctx, testsrepository.SourceRow{
-			SiteURL: string(page), FeedURL: string(oldFeed), Title: old.Title, Status: string(domain.SourceActive),
+			SiteURL: string(page), FeedURL: string(blogFeed), Title: blog.Title, Status: cmp.Or(blog.Status, string(domain.SourceActive)),
 		}, s.Clock.Now())
 		s.Require().NoError(err)
 	}
 
 	var out bytes.Buffer
-	err := controllercli.Sources(s.Ctx, controllercli.SourcesData{
+	err = controllercli.Sources(s.Ctx, controllercli.SourcesData{
 		Svc: s.svc, Args: []string{"import", blogsListPath}, Out: &out,
 	})
 
@@ -352,7 +380,7 @@ func (s *BlogsListImportTestSuite) TestImportDryRunOfBlogsListAddsOnlyTheNewBlog
 		s.Require().NoError(err)
 		s.Contains(out.String(), fmt.Sprintf("+ add     %s (feed %s)\n", page, newFeed))
 	}
-	s.Equal(len(oldBlogs), s.CountRows("source"))
+	s.Equal(len(board), s.CountRows("source"))
 }
 
 func (s *BlogsListImportTestSuite) TestImportRejectsAMisspeltKey() {
