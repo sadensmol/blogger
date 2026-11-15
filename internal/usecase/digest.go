@@ -75,14 +75,19 @@ func NewDigest(d DigestData) *Digest {
 	}
 }
 
-// Show runs digest-show and answers the slash command privately when it fails: a failed post never reaches the channel.
+// Show runs digest-show and always answers the slash command privately with the tokens it used.
+// A failure puts its reason above them: a failed post never reaches the channel.
 func (d *Digest) Show(ctx context.Context, replyURL string) error {
+	ctx, meter := llm.WithMeter(ctx)
 	err := d.Run(ctx, domain.RunKindDigestShow)
-	if err == nil {
-		return nil
+	usage := meter.Usage()
+	log.Ctx(ctx).Info().Msgf("%s run: %s", domain.RunKindDigestShow, slackpost.UsageText(usage))
+	text := ""
+	if err != nil {
+		text = slackpost.Escape(showFailure(err))
 	}
-	if replyErr := d.poster.Reply(ctx, replyURL, slackpost.Escape(showFailure(err))); replyErr != nil {
-		log.Ctx(ctx).Error().Err(replyErr).Msg("cannot tell the user why /show failed")
+	if replyErr := d.poster.ReplyWithUsage(ctx, replyURL, text, usage); replyErr != nil {
+		log.Ctx(ctx).Error().Err(replyErr).Msg("cannot answer /show")
 	}
 	return err
 }

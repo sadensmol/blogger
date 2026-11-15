@@ -34,6 +34,8 @@ type IBackend interface {
 	Name() Backend
 	Supports(job Job) bool // false: the runner skips the backend without a try
 	Answer(ctx context.Context, job Job) ([]byte, error)
+	// Usage reads the input and output tokens of the last attempt from the job's stdout.log.
+	Usage(ctx context.Context, job Job) (input, output int64, err error)
 }
 
 type Config struct {

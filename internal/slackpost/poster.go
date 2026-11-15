@@ -149,7 +149,23 @@ func ErrorCode(err error) string {
 }
 
 func (p *Poster) Reply(ctx context.Context, responseURL, text string) error {
-	msg := &slack.WebhookMessage{ResponseType: slack.ResponseTypeEphemeral, Text: text}
+	return p.reply(ctx, responseURL, &slack.WebhookMessage{ResponseType: slack.ResponseTypeEphemeral, Text: text})
+}
+
+// ReplyWithUsage puts the token line as small text below text; an empty text sends the token line alone.
+func (p *Poster) ReplyWithUsage(ctx context.Context, responseURL, text string, u domain.TokenUsage) error {
+	fallback := text
+	if fallback == "" {
+		fallback = UsageText(u)
+	}
+	return p.reply(ctx, responseURL, &slack.WebhookMessage{
+		ResponseType: slack.ResponseTypeEphemeral,
+		Text:         fallback,
+		Blocks:       &slack.Blocks{BlockSet: UsageBlocks(text, u)},
+	})
+}
+
+func (p *Poster) reply(ctx context.Context, responseURL string, msg *slack.WebhookMessage) error {
 	if err := slack.PostWebhookCustomHTTPContext(ctx, responseURL, p.http, msg); err != nil {
 		// a *url.Error prints the response URL, which lets anyone post as the bot: keep only its cause
 		var urlErr *url.Error

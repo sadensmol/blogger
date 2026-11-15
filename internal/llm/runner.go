@@ -70,6 +70,7 @@ func (r *Runner) run(ctx context.Context, req jobRequest, accept func(answer []b
 			continue
 		}
 		answer, err := backend.Answer(ctx, job)
+		countUsage(ctx, backend, job)
 		if err != nil {
 			log.Ctx(ctx).Warn().Err(err).Msgf("%s job in %s failed on %s", job.Skill, job.Dir, backend.Name())
 			continue
@@ -87,6 +88,21 @@ func (r *Runner) run(ctx context.Context, req jobRequest, accept func(answer []b
 		return "", fmt.Errorf("%s job stopped: %w", job.Skill, err)
 	}
 	return "", fmt.Errorf("%s: %w", job.Skill, ErrAllBackendsFailed)
+}
+
+// countUsage adds the last attempt to the meter of ctx. Usage is best effort: it never fails the job.
+func countUsage(ctx context.Context, backend IBackend, job Job) {
+	meter, ok := ctx.Value(meterKey{}).(*Meter)
+	if !ok {
+		return
+	}
+	input, output, err := backend.Usage(ctx, job)
+	if err != nil {
+		log.Ctx(ctx).Warn().Err(err).Msgf("%s job in %s: %s reported no token usage", job.Skill, job.Dir, backend.Name())
+		meter.addUnreportedRun(backend.Name())
+		return
+	}
+	meter.addRun(backend.Name(), input, output)
 }
 
 func (r *Runner) newJob(req jobRequest) (Job, error) {
