@@ -1,13 +1,23 @@
 package tests_test
 
 import (
+	"bytes"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 	"go.yaml.in/yaml/v3"
 
+	controllercli "github.com/sadensmol/blogger/internal/controller/cli"
 	"github.com/sadensmol/blogger/internal/domain"
+	"github.com/sadensmol/blogger/internal/feed"
+	"github.com/sadensmol/blogger/internal/repository"
+	"github.com/sadensmol/blogger/internal/service"
+	"github.com/sadensmol/blogger/tests"
+	testsrepository "github.com/sadensmol/blogger/tests/repository"
 )
 
 const (
@@ -272,4 +282,71 @@ func (s *BlogsListTestSuite) TestBlogsListHasNoPageOrFeedTwice() {
 	s.Empty(twice)
 	s.Len(pages, len(oldBlogs)+len(newBlogs))
 	s.Len(feeds, wantFeeds)
+}
+
+type BlogsListImportTestSuite struct {
+	tests.Suite
+
+	sources *testsrepository.Source
+	svc     *service.Source
+}
+
+func TestBlogsListImportTestSuite(t *testing.T) {
+	suite.Run(t, &BlogsListImportTestSuite{})
+}
+
+func (s *BlogsListImportTestSuite) SetupTest() {
+	s.Suite.SetupTest()
+	s.sources = testsrepository.NewSource(s.DB)
+	// every feed lookup fails at once: the list gives each new blog its feed, so the import must not look one up.
+	s.svc = service.NewSource(repository.NewSource(s.DB), feed.NewClient(time.Nanosecond), s.Clock.Now)
+}
+
+func (s *BlogsListImportTestSuite) TestImportDryRunOfBlogsListAddsOnlyTheNewBlogs() {
+	for _, old := range oldBlogs {
+		page, err := domain.ParseURL(old.URL)
+		s.Require().NoError(err)
+		var oldFeed domain.URL
+		if old.Feed != "" {
+			oldFeed, err = domain.ParseURL(old.Feed)
+			s.Require().NoError(err)
+		}
+		_, err = s.sources.Insert(s.Ctx, testsrepository.SourceRow{
+			SiteURL: string(page), FeedURL: string(oldFeed), Title: old.Title, Status: string(domain.SourceActive),
+		}, s.Clock.Now())
+		s.Require().NoError(err)
+	}
+
+	var out bytes.Buffer
+	err := controllercli.Sources(s.Ctx, controllercli.SourcesData{
+		Svc: s.svc, Args: []string{"import", blogsListPath}, Out: &out,
+	})
+
+	s.Require().NoError(err)
+	s.NotContains(out.String(), "~ change")
+	s.NotContains(out.String(), "- remove")
+	s.Equal(len(newBlogs), strings.Count(out.String(), "+ add"))
+	for _, want := range newBlogs {
+		page, err := domain.ParseURL(want.URL)
+		s.Require().NoError(err)
+		newFeed, err := domain.ParseURL(want.Feed)
+		s.Require().NoError(err)
+		s.Contains(out.String(), fmt.Sprintf("+ add     %s (feed %s)\n", page, newFeed))
+	}
+	s.Contains(out.String(), fmt.Sprintf("%d changes.", len(newBlogs)))
+	s.Equal(len(oldBlogs), s.CountRows("source"))
+}
+
+func (s *BlogsListImportTestSuite) TestImportRejectsAMisspeltKey() {
+	const misspelt = "sources:\n  - url: https://appliedgo.net\n    feeds: https://appliedgo.net/index.xml\n    title: Applied Go\n"
+
+	var out bytes.Buffer
+	err := controllercli.Sources(s.Ctx, controllercli.SourcesData{
+		Svc: s.svc, Args: []string{"import", "--apply", "-"}, In: strings.NewReader(misspelt), Out: &out,
+	})
+
+	var typeErr *yaml.TypeError
+	s.ErrorAs(err, &typeErr)
+	s.Empty(out.String())
+	s.Equal(0, s.CountRows("source"))
 }
