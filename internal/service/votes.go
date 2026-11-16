@@ -82,5 +82,9 @@ func (v *Votes) apply(
 }
 
 func (v *Votes) Themes(ctx context.Context) (domain.Themes, error) {
-	return domain.Themes{}, nil
+	themes, err := v.reactions.SumVotesByTagNotRemoved(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("cannot score themes: %w", err)
+	}
+	return themes, nil
 }

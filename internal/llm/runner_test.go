@@ -358,7 +358,7 @@ func TestUpdateProfileWithoutLearnedFallsBack(t *testing.T) {
 	f := newFakeAgents(t, llm.Claude, llm.Codex)
 	f.answer("claude", llm.SkillUpdateProfile, map[string]any{"interests_md": "# Interests\n\n## My notes\nGo and SQLite.\n"})
 	f.answer("codex", llm.SkillUpdateProfile, map[string]any{"interests_md": "# Interests\n\n## My notes\nGo and SQLite.\n\n## Learned\nLikes databases.\n"})
-	votes := []domain.VotedArticle{{Article: pickInput().Candidates[0], Topics: []string{"go"}, Vote: domain.VoteUp}}
+	votes := []domain.VotedArticle{{Article: pickInput().Candidates[0], Tags: []domain.Tag{"go"}, Vote: domain.VoteUp}}
 
 	_, backend, err := f.runner().UpdateProfile(context.Background(), CurrentProfile, votes, nil)
 

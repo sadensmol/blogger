@@ -28,6 +28,7 @@ const (
 	backfillFailures  = 5
 	sitemapEntriesMax = 3 * backfillMax
 	pageArticleReads  = 20
+	knownTagsMax      = 100
 )
 
 type Articles struct {
@@ -522,6 +523,51 @@ func (a *Articles) store(ctx context.Context, sourceID domain.SourceID, item fee
 	}, a.now())
 }
 
+// Tag gives the articles their stored tags and asks the agent only for the untagged ones.
+// When the agent fails, it returns the articles with their stored tags and the error.
 func (a *Articles) Tag(ctx context.Context, articles []domain.Article) ([]domain.Article, error) {
-	return articles, nil
+	if len(articles) == 0 {
+		return articles, nil
+	}
+	ids := make([]domain.ArticleID, 0, len(articles))
+	for _, article := range articles {
+		ids = append(ids, article.ID)
+	}
+	stored, err := a.repo.ListTagsByArticleIDs(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read the tags of %d articles: %w", len(articles), err)
+	}
+	tagged := make([]domain.Article, 0, len(articles))
+	var untagged []domain.Article
+	for _, article := range articles {
+		article.Tags = stored[article.ID]
+		if len(article.Tags) == 0 {
+			untagged = append(untagged, article)
+		}
+		tagged = append(tagged, article)
+	}
+	if len(untagged) == 0 {
+		return tagged, nil
+	}
+
+	known, err := a.repo.ListTagsByUse(ctx, knownTagsMax)
+	if err != nil {
+		return nil, fmt.Errorf("cannot list the known tags: %w", err)
+	}
+	answered, backend, err := a.llm.TagArticles(ctx, untagged, known)
+	if err != nil {
+		return tagged, fmt.Errorf("cannot tag %d articles: %w", len(untagged), err)
+	}
+	answeredByID := make(map[domain.ArticleID][]domain.Tag, len(answered))
+	for i, article := range tagged {
+		if tags, ok := answered[article.URL]; ok && len(article.Tags) == 0 {
+			tagged[i].Tags = tags
+			answeredByID[article.ID] = tags
+		}
+	}
+	if err := a.repo.CreateTagsIgnoringDuplicates(ctx, answeredByID, a.now()); err != nil {
+		log.Ctx(ctx).Warn().Err(err).Msgf("the tags of %d articles are asked again next time", len(answeredByID))
+	}
+	log.Ctx(ctx).Info().Msgf("%s tagged %d of %d articles", backend, len(answeredByID), len(untagged))
+	return tagged, nil
 }

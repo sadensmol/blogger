@@ -90,8 +90,8 @@ func TestLivePickArticlesForShowReturnsOneEvenWhenNothingFits(t *testing.T) {
 func TestLiveUpdateProfileKeepsNotes(t *testing.T) {
 	candidates := liveCandidates()
 	votes := []domain.VotedArticle{
-		{Article: candidates[0], Topics: []string{"go", "sqlite"}, Vote: domain.VoteUp},
-		{Article: candidates[2], Topics: []string{"gardening"}, Vote: domain.VoteDown},
+		{Article: candidates[0], Tags: []domain.Tag{"go", "sqlite"}, Vote: domain.VoteUp},
+		{Article: candidates[2], Tags: []domain.Tag{"gardening"}, Vote: domain.VoteDown},
 	}
 	for _, backend := range liveBackends {
 		t.Run(string(backend), func(t *testing.T) {

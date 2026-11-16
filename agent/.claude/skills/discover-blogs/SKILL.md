@@ -1,15 +1,16 @@
 ---
 name: discover-blogs
-description: Search the web for new blogs the user may like, based on how they voted on the blogs they follow. Use when a job asks for discover-blogs with an input JSON file.
+description: Search the web for new blogs the user may like, based on the themes the user liked and disliked. Use when a job asks for discover-blogs with an input JSON file.
 ---
 
 # Discover new blogs
 
 1. Read the input file. Its path is in the prompt. It is JSON:
    - `max`: the most blogs you may propose.
-   - `sources`: the blogs the user already has. Each has `title`, `site_url`, `feed_url`, `status`, `up` and `down` (vote counts).
-2. Find what the user likes: blogs with more `up` than `down` votes are well voted. Blogs with more `down` votes are disliked.
-3. Search the web for blogs like the well-voted ones and unlike the down-voted ones. Prefer active personal or engineering blogs with real articles.
+   - `sources`: the blogs the user already has. Each has `title`, `site_url`, `feed_url` and `status`.
+   - `themes`: the user's theme scores. Each has `tag`, `up` and `down`: the 👍 and 👎 votes on articles with this tag. The list can be empty.
+2. Find what the user likes: themes with more `up` than `down` votes are liked. Themes with more `down` than `up` votes are disliked. Judge by themes only, never by a blog in `sources`.
+3. Search the web for blogs that write about the liked themes and not about the disliked themes. When `themes` is empty, search for blogs on the topics of `sources`. Prefer active personal or engineering blogs with real articles.
 4. Propose up to `max` blogs.
 5. Look for a working RSS or Atom feed for each blog. Fetch the feed URL to check that it answers with a feed. A blog without a feed is fine when its page lists at least 3 articles.
 6. Never propose a blog that is in `sources`, in any status. Compare by site and by feed URL.

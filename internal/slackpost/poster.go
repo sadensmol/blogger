@@ -59,6 +59,13 @@ func (p *Poster) Pick(ctx context.Context, a domain.Article, pk domain.Pick) (st
 	}
 	text := fmt.Sprintf("*<%s|%s>*\n%s\n_%s · %s_",
 		urlEscaper.Replace(string(a.URL)), Escape(a.Title), Escape(pk.Description), source, Escape(pk.Reason))
+	if len(a.Tags) > 0 {
+		themes := make([]string, 0, len(a.Tags))
+		for _, tag := range a.Tags {
+			themes = append(themes, Escape(string(tag)))
+		}
+		text = fmt.Sprintf("%s\nThemes: %s", text, strings.Join(themes, ", "))
+	}
 
 	channel, ts, err := p.api.PostMessageContext(ctx, p.channelID,
 		slack.MsgOptionText(text, false),

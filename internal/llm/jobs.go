@@ -28,15 +28,49 @@ type pickJobInput struct {
 	Max         int             `json:"max"`
 	InterestsMD string          `json:"interests_md"`
 	Candidates  []candidateJSON `json:"candidates"`
+	Themes      []themeJSON     `json:"themes"`
 }
 
 type candidateJSON struct {
-	URL       string `json:"url"`
-	Title     string `json:"title"`
-	Source    string `json:"source"`
-	Published string `json:"published"`
-	Excerpt   string `json:"excerpt"`
-	Shown     int    `json:"shown"`
+	URL       string   `json:"url"`
+	Title     string   `json:"title"`
+	Source    string   `json:"source"`
+	Published string   `json:"published"`
+	Excerpt   string   `json:"excerpt"`
+	Shown     int      `json:"shown"`
+	Tags      []string `json:"tags"`
+}
+
+type themeJSON struct {
+	Tag  string `json:"tag"`
+	Up   int    `json:"up"`
+	Down int    `json:"down"`
+}
+
+type domainTheme domain.Theme
+
+func (t domainTheme) toThemeJSON() themeJSON {
+	return themeJSON{Tag: string(t.Tag), Up: t.Votes.Up, Down: t.Votes.Down}
+}
+
+type domainThemes domain.Themes
+
+func (t domainThemes) toThemesJSON() []themeJSON {
+	themes := make([]themeJSON, 0, len(t))
+	for _, theme := range t {
+		themes = append(themes, domainTheme(theme).toThemeJSON())
+	}
+	return themes
+}
+
+type domainTags []domain.Tag
+
+func (t domainTags) toTagsJSON() []string {
+	tags := make([]string, 0, len(t))
+	for _, tag := range t {
+		tags = append(tags, string(tag))
+	}
+	return tags
 }
 
 type domainArticle domain.Article
@@ -48,6 +82,7 @@ func (a domainArticle) toCandidateJSON() candidateJSON {
 		Source:  a.SourceTitle,
 		Excerpt: a.Excerpt,
 		Shown:   a.Shown,
+		Tags:    domainTags(a.Tags).toTagsJSON(),
 	}
 	if !a.PublishedAt.IsZero() {
 		candidate.Published = a.PublishedAt.UTC().Format(time.RFC3339)
@@ -81,7 +116,13 @@ func (r *Runner) PickArticles(ctx context.Context, in PickInput) ([]domain.Pick,
 	}
 	req := jobRequest{
 		skill: SkillPickArticles,
-		input: pickJobInput{Min: in.Count.Min, Max: in.Count.Max, InterestsMD: string(in.Profile), Candidates: candidates},
+		input: pickJobInput{
+			Min:         in.Count.Min,
+			Max:         in.Count.Max,
+			InterestsMD: string(in.Profile),
+			Candidates:  candidates,
+			Themes:      domainThemes(in.Themes).toThemesJSON(),
+		},
 	}
 
 	var picks []domain.Pick
@@ -116,7 +157,8 @@ type profileAnswer struct {
 
 type updateJobInput struct {
 	InterestsMD string     `json:"interests_md"`
-	Votes       []voteJSON `json:"votes"`
+	Votes       []voteJSON  `json:"votes"`
+	Themes      []themeJSON `json:"themes"`
 }
 
 type voteJSON struct {
@@ -124,7 +166,7 @@ type voteJSON struct {
 	Title  string   `json:"title"`
 	URL    string   `json:"url"`
 	Source string   `json:"source"`
-	Topics []string `json:"topics"`
+	Tags   []string `json:"tags"`
 }
 
 type domainVotedArticle domain.VotedArticle
@@ -139,7 +181,7 @@ func (v domainVotedArticle) toVoteJSON() voteJSON {
 		Title:  v.Article.Title,
 		URL:    string(v.Article.URL),
 		Source: v.Article.SourceTitle,
-		Topics: v.Topics,
+		Tags:   domainTags(v.Tags).toTagsJSON(),
 	}
 }
 
@@ -150,7 +192,7 @@ func (r *Runner) UpdateProfile(ctx context.Context, p domain.Profile, votes []do
 	}
 	req := jobRequest{
 		skill: SkillUpdateProfile,
-		input: updateJobInput{InterestsMD: string(p), Votes: votesJSON},
+		input: updateJobInput{InterestsMD: string(p), Votes: votesJSON, Themes: domainThemes(themes).toThemesJSON()},
 	}
 
 	var updated domain.Profile
@@ -226,6 +268,7 @@ func (r *Runner) InitProfile(ctx context.Context, current domain.Profile, source
 type discoverJobInput struct {
 	Max     int          `json:"max"`
 	Sources []sourceJSON `json:"sources"`
+	Themes  []themeJSON  `json:"themes"`
 }
 
 type sourceJSON struct {
@@ -233,8 +276,6 @@ type sourceJSON struct {
 	SiteURL string `json:"site_url"`
 	FeedURL string `json:"feed_url"`
 	Status  string `json:"status"`
-	Up      int    `json:"up"`
-	Down    int    `json:"down"`
 }
 
 type domainSource domain.Source
@@ -245,8 +286,6 @@ func (s domainSource) toSourceJSON() sourceJSON {
 		SiteURL: string(s.SiteURL),
 		FeedURL: string(s.FeedURL),
 		Status:  string(s.Status),
-		Up:      s.Votes.Up,
-		Down:    s.Votes.Down,
 	}
 }
 
@@ -292,7 +331,7 @@ func (r *Runner) DiscoverBlogs(ctx context.Context, sources []domain.Source, the
 	req := jobRequest{
 		skill:    SkillDiscoverBlogs,
 		needsWeb: true,
-		input:    discoverJobInput{Max: max, Sources: sourcesJSON},
+		input:    discoverJobInput{Max: max, Sources: sourcesJSON, Themes: domainThemes(themes).toThemesJSON()},
 	}
 
 	var proposals []domain.BlogProposal
