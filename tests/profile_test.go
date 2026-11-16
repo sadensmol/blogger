@@ -13,7 +13,6 @@ import (
 
 	controllercli "github.com/sadensmol/blogger/internal/controller/cli"
 	"github.com/sadensmol/blogger/internal/domain"
-	"github.com/sadensmol/blogger/internal/feed"
 	"github.com/sadensmol/blogger/internal/repository"
 	"github.com/sadensmol/blogger/internal/service"
 	"github.com/sadensmol/blogger/tests"
@@ -172,12 +171,7 @@ func (s *ProfileTestSuite) TestNotesEditDoesNotHideNewVotes() {
 	s.insertVote(s.Clock.Now())
 	s.Clock.Advance(time.Hour)
 	s.Require().NoError(s.svc.SetNotes(s.Ctx, userNotes))
-	votes := service.NewVotes(service.VotesData{
-		Reactions: repository.NewReaction(s.DB),
-		Posts:     service.NewPosts(repository.NewPost(s.DB), s.Clock.Now),
-		Sources:   service.NewSource(repository.NewSource(s.DB), feed.NewClient(time.Second), s.Clock.Now),
-		Now:       s.Clock.Now,
-	})
+	votes := service.NewVotes(repository.NewReaction(s.DB), service.NewPosts(repository.NewPost(s.DB), s.Clock.Now), s.Clock.Now)
 
 	since, err := s.svc.LastLearnedAt(s.Ctx)
 	s.Require().NoError(err)

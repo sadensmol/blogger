@@ -127,12 +127,7 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	feeds := feed.NewClient(feedTimeout, feedOptions...)
 	sources := service.NewSource(repository.NewSource(db), feeds, time.Now)
 	posts := service.NewPosts(repository.NewPost(db), time.Now)
-	votes := service.NewVotes(service.VotesData{
-		Reactions: repository.NewReaction(db),
-		Posts:     posts,
-		Sources:   sources,
-		Now:       time.Now,
-	})
+	votes := service.NewVotes(repository.NewReaction(db), posts, time.Now)
 
 	var order []llm.Backend
 	for _, name := range strings.Split(cfg.Backends, ",") {
@@ -175,6 +170,7 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	poster := slackpost.NewPoster(api, slackHTTP, cfg.SlackChannelID)
 	suggest := usecase.NewSuggest(usecase.SuggestData{
 		Sources:   sources,
+		Votes:     votes,
 		Proposals: service.NewProposals(repository.NewProposal(db), time.Now),
 		Runs:      runs,
 		LLM:       runner,
@@ -196,6 +192,7 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 		}),
 		Discovery: usecase.NewDiscovery(usecase.DiscoveryData{
 			Sources: sources,
+			Votes:   votes,
 			Runs:    runs,
 			LLM:     runner,
 		}),

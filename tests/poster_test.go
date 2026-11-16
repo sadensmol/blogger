@@ -3,6 +3,7 @@ package tests_test
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -76,6 +77,34 @@ func (s *PosterTestSuite) TestPickEscapesTitle() {
 
 	s.Require().NoError(err)
 	s.Contains(s.fake.Posted()[0], "A &lt;b&gt; &amp; C")
+}
+
+func (s *PosterTestSuite) TestPickEndsWithThemesLine() {
+	article := s.article(posterTitle)
+	article.Tags = []domain.Tag{"go", "sqlite"}
+
+	_, _, err := s.poster.Pick(s.T().Context(), article, domain.Pick{Description: "d", Reason: posterReason})
+
+	s.Require().NoError(err)
+	s.Equal(fmt.Sprintf("*<%s|%s>*\nd\n_%s · %s_\nThemes: go, sqlite", posterURL, posterTitle, posterSource, posterReason), s.fake.Posted()[0])
+}
+
+func (s *PosterTestSuite) TestPickEscapesThemes() {
+	article := s.article(posterTitle)
+	article.Tags = []domain.Tag{"q&a", "<!channel>"}
+
+	_, _, err := s.poster.Pick(s.T().Context(), article, domain.Pick{Description: "d", Reason: posterReason})
+
+	s.Require().NoError(err)
+	lines := strings.Split(s.fake.Posted()[0], "\n")
+	s.Equal("Themes: q&amp;a, &lt;!channel&gt;", lines[len(lines)-1])
+}
+
+func (s *PosterTestSuite) TestPickWithoutTagsHasNoThemesLine() {
+	_, _, err := s.poster.Pick(s.T().Context(), s.article(posterTitle), domain.Pick{Description: "d", Reason: posterReason})
+
+	s.Require().NoError(err)
+	s.Equal(fmt.Sprintf("*<%s|%s>*\nd\n_%s · %s_", posterURL, posterTitle, posterSource, posterReason), s.fake.Posted()[0])
 }
 
 func (s *PosterTestSuite) TestReplyIsEphemeral() {

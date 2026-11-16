@@ -23,6 +23,7 @@ const (
 
 type SuggestData struct {
 	Sources   *service.Source
+	Votes     *service.Votes
 	Proposals *service.Proposals
 	Runs      *service.Runs
 	LLM       *llm.Runner
@@ -32,6 +33,7 @@ type SuggestData struct {
 // Suggest answers /discover: it shows new blogs with add buttons and adds the one the owner clicks.
 type Suggest struct {
 	sources   *service.Source
+	votes     *service.Votes
 	proposals *service.Proposals
 	runs      *service.Runs
 	llm       *llm.Runner
@@ -41,6 +43,7 @@ type Suggest struct {
 func NewSuggest(d SuggestData) *Suggest {
 	return &Suggest{
 		sources:   d.Sources,
+		votes:     d.Votes,
 		proposals: d.Proposals,
 		runs:      d.Runs,
 		llm:       d.LLM,
@@ -98,7 +101,11 @@ func (s *Suggest) suggest(ctx context.Context, runID domain.RunID) (llm.Backend,
 		return "", nil
 	}
 
-	blogs, backend, err := s.llm.DiscoverBlogs(ctx, sources, suggestMax)
+	themes, err := s.votes.Themes(ctx)
+	if err != nil {
+		return "", fmt.Errorf("cannot read the theme scores: %w", err)
+	}
+	blogs, backend, err := s.llm.DiscoverBlogs(ctx, sources, themes, suggestMax)
 	if err != nil {
 		return "", fmt.Errorf("cannot ask for blogs: %w", err)
 	}

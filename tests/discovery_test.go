@@ -68,6 +68,7 @@ func (s *DiscoveryTestSuite) discovery(order ...llm.Backend) *usecase.Discovery 
 	s.Require().NoError(err)
 	return usecase.NewDiscovery(usecase.DiscoveryData{
 		Sources: service.NewSource(repository.NewSource(s.DB), feed.NewClient(5*time.Second, feed.WithLoopbackAllowed()), s.Clock.Now),
+		Votes:   service.NewVotes(repository.NewReaction(s.DB), service.NewPosts(repository.NewPost(s.DB), s.Clock.Now), s.Clock.Now),
 		Runs:    service.NewRuns(repository.NewRun(s.DB), s.Clock.Now),
 		LLM:     llm.NewRunner(backends, s.T().TempDir(), llm.RunAs{}),
 	})

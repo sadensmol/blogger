@@ -62,7 +62,7 @@ type Post struct {
 
 type VotedArticle struct {
 	Article Article
-	Topics  []string
+	Tags    []Tag
 	Vote    Vote
 }
 

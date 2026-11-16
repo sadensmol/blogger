@@ -175,18 +175,6 @@ func (s *Source) Known(ctx context.Context, pageURL, feedURL domain.URL) (bool, 
 	return known, nil
 }
 
-func (s *Source) ApplyStatusRule(ctx context.Context, id domain.SourceID) (domain.Source, error) {
-	src, err := s.repo.FindNotDeletedByID(ctx, id)
-	if err != nil {
-		return domain.Source{}, fmt.Errorf("cannot apply status rule: %w", err)
-	}
-	status := src.StatusAfterVotes()
-	if status == src.Status {
-		return src, nil
-	}
-	return s.changeStatus(ctx, src, status)
-}
-
 // Diff matches an entry to a blog by its page, else by its feed: an entry can change the page of a blog.
 // An entry without a feed gets the feed found at its page when it matches no blog by page;
 // a blog without a feed is fine. An entry with only a feed keeps the page of its blog, or takes the feed url as its page.

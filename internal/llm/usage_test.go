@@ -216,11 +216,11 @@ func TestEveryJobOfOneMeterCounts(t *testing.T) {
 	f := newFakeAgents(t, llm.Claude)
 	f.answer("claude", llm.SkillUpdateProfile, map[string]any{"interests_md": "# Interests\n\n## My notes\nGo and SQLite.\n\n## Learned\nLikes databases.\n"})
 	f.answer("claude", llm.SkillPickArticles, picksAnswer(URLA))
-	votes := []domain.VotedArticle{{Article: pickInput().Candidates[0], Topics: []string{"go"}, Vote: domain.VoteUp}}
+	votes := []domain.VotedArticle{{Article: pickInput().Candidates[0], Tags: []domain.Tag{"go"}, Vote: domain.VoteUp}}
 	runner := f.runner()
 	ctx, meter := llm.WithMeter(context.Background())
 
-	_, _, err := runner.UpdateProfile(ctx, CurrentProfile, votes)
+	_, _, err := runner.UpdateProfile(ctx, CurrentProfile, votes, nil)
 	require.NoError(t, err)
 	_, _, err = runner.PickArticles(ctx, pickInput())
 	require.NoError(t, err)

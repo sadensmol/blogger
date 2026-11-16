@@ -90,12 +90,12 @@ func TestLivePickArticlesForShowReturnsOneEvenWhenNothingFits(t *testing.T) {
 func TestLiveUpdateProfileKeepsNotes(t *testing.T) {
 	candidates := liveCandidates()
 	votes := []domain.VotedArticle{
-		{Article: candidates[0], Topics: []string{"go", "sqlite"}, Vote: domain.VoteUp},
-		{Article: candidates[2], Topics: []string{"gardening"}, Vote: domain.VoteDown},
+		{Article: candidates[0], Tags: []domain.Tag{"go", "sqlite"}, Vote: domain.VoteUp},
+		{Article: candidates[2], Tags: []domain.Tag{"gardening"}, Vote: domain.VoteDown},
 	}
 	for _, backend := range liveBackends {
 		t.Run(string(backend), func(t *testing.T) {
-			updated, used, err := liveRunner(t, backend).UpdateProfile(context.Background(), LiveProfile, votes)
+			updated, used, err := liveRunner(t, backend).UpdateProfile(context.Background(), LiveProfile, votes, nil)
 
 			require.NoError(t, err)
 			require.Equal(t, backend, used)
@@ -137,7 +137,7 @@ func TestLiveDiscoverBlogs(t *testing.T) {
 	}
 	for _, backend := range liveBackends {
 		t.Run(string(backend), func(t *testing.T) {
-			proposals, used, err := liveRunner(t, backend).DiscoverBlogs(context.Background(), sources, 2)
+			proposals, used, err := liveRunner(t, backend).DiscoverBlogs(context.Background(), sources, nil, 2)
 
 			require.NoError(t, err)
 			require.Equal(t, backend, used)

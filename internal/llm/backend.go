@@ -22,6 +22,7 @@ const (
 	SkillInitProfile   Skill = "init-profile"
 	SkillDiscoverBlogs Skill = "discover-blogs"
 	SkillClassifyLinks Skill = "classify-links"
+	SkillTagArticles   Skill = "tag-articles"
 )
 
 type Job struct {

@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/sadensmol/blogger/internal/domain"
-	"github.com/sadensmol/blogger/internal/feed"
 	"github.com/sadensmol/blogger/internal/repository"
 	"github.com/sadensmol/blogger/internal/service"
 	"github.com/sadensmol/blogger/tests"
@@ -29,7 +28,6 @@ type FeedbackTestSuite struct {
 	runs     *testsrepository.Run
 	posts    *testsrepository.Post
 	reactions *testsrepository.Reaction
-	sourceSv *service.Source
 	votes    *service.Votes
 }
 
@@ -44,13 +42,7 @@ func (s *FeedbackTestSuite) SetupTest() {
 	s.runs = testsrepository.NewRun(s.DB)
 	s.posts = testsrepository.NewPost(s.DB)
 	s.reactions = testsrepository.NewReaction(s.DB)
-	s.sourceSv = service.NewSource(repository.NewSource(s.DB), feed.NewClient(time.Second), s.Clock.Now)
-	s.votes = service.NewVotes(service.VotesData{
-		Reactions: repository.NewReaction(s.DB),
-		Posts:     service.NewPosts(repository.NewPost(s.DB), s.Clock.Now),
-		Sources:   s.sourceSv,
-		Now:       s.Clock.Now,
-	})
+	s.votes = service.NewVotes(repository.NewReaction(s.DB), service.NewPosts(repository.NewPost(s.DB), s.Clock.Now), s.Clock.Now)
 }
 
 func (s *FeedbackTestSuite) insertSource(status domain.SourceStatus) int64 {
@@ -82,12 +74,6 @@ func (s *FeedbackTestSuite) votesOf(id int64) (up, down int) {
 	down, err = s.sources.DownVotes(s.Ctx, id)
 	s.Require().NoError(err)
 	return up, down
-}
-
-func (s *FeedbackTestSuite) status(id int64) string {
-	status, err := s.sources.Status(s.Ctx, id)
-	s.Require().NoError(err)
-	return status
 }
 
 func (s *FeedbackTestSuite) TestAddStoresUpVote() {
@@ -162,44 +148,4 @@ func (s *FeedbackTestSuite) TestRemoveDropsVote() {
 	s.Equal(0, up)
 	s.Equal(0, down)
 	s.True(changed)
-}
-
-func (s *FeedbackTestSuite) TestThirdNetDownVotePausesActiveSource() {
-	id := s.insertSource(domain.SourceActive)
-
-	for n := 1; n <= 3; n++ {
-		_, event := s.insertPost(id, n)
-		s.vote(event, domain.VoteDown)
-	}
-
-	s.Equal(string(domain.SourcePaused), s.status(id))
-}
-
-func (s *FeedbackTestSuite) TestTwoNetUpVotesPromoteTrialSource() {
-	id := s.insertSource(domain.SourceTrial)
-
-	for n := 1; n <= 2; n++ {
-		_, event := s.insertPost(id, n)
-		s.vote(event, domain.VoteUp)
-	}
-
-	s.Equal(string(domain.SourceActive), s.status(id))
-}
-
-func (s *FeedbackTestSuite) TestResumedSourceStartsFromZero() {
-	id := s.insertSource(domain.SourceActive)
-	for n := 1; n <= 3; n++ {
-		postID, _ := s.insertPost(id, n)
-		s.Require().NoError(s.reactions.Insert(s.Ctx, testsrepository.ReactionRow{
-			PostID: postID, UserID: voterID, Vote: int(domain.VoteDown), CreatedAt: s.Clock.Now(),
-		}))
-	}
-	s.Clock.Advance(time.Hour)
-	s.Require().NoError(s.sources.SetStatusChangedAt(s.Ctx, id, s.Clock.Now()))
-	s.Clock.Advance(time.Hour)
-	_, event := s.insertPost(id, 4)
-
-	s.vote(event, domain.VoteDown)
-
-	s.Equal(string(domain.SourceActive), s.status(id))
 }
