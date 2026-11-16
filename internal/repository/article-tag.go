@@ -95,3 +95,19 @@ LIMIT ?`, limit)
 	}
 	return tags, nil
 }
+
+func (r *Article) CreateTagsIfUntagged(ctx context.Context, id domain.ArticleID, tags []domain.Tag, now time.Time) error {
+	tagsJSON, err := json.Marshal(tags)
+	if err != nil {
+		return fmt.Errorf("cannot encode the tags of article %d: %w", id, err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+INSERT INTO article_tag (article_id, tag, created_at, updated_at)
+SELECT ?, value, ?, ?
+FROM json_each(?)
+WHERE NOT EXISTS (SELECT 1 FROM article_tag WHERE article_id = ?)`,
+		id, formatTime(now), formatTime(now), string(tagsJSON), id); err != nil {
+		return fmt.Errorf("cannot create the tags of untagged article %d: %w", id, err)
+	}
+	return nil
+}

@@ -523,6 +523,16 @@ func (a *Articles) store(ctx context.Context, sourceID domain.SourceID, item fee
 	}, a.now())
 }
 
+func (a *Articles) CreateTagsIfUntagged(ctx context.Context, id domain.ArticleID, tags []domain.Tag) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	if err := a.repo.CreateTagsIfUntagged(ctx, id, tags, a.now()); err != nil {
+		return fmt.Errorf("cannot tag article %d: %w", id, err)
+	}
+	return nil
+}
+
 // Tag gives the articles their stored tags and asks the agent only for the untagged ones.
 // When the agent fails, it returns the articles with their stored tags and the error.
 func (a *Articles) Tag(ctx context.Context, articles []domain.Article) ([]domain.Article, error) {

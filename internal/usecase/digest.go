@@ -231,6 +231,10 @@ func (d *Digest) postPick(ctx context.Context, runID domain.RunID, a domain.Arti
 		return fmt.Errorf("cannot store message %s %s of article %d: %w", channelID, ts, a.ID, err)
 	}
 	log.Ctx(ctx).Info().Msgf("run %d posted article %d as post %d (%s %s)", runID, a.ID, postID, channelID, ts)
+	// an article the tag job missed takes its pick topics as tags, so votes on this post count for themes
+	if err := d.articles.CreateTagsIfUntagged(context.WithoutCancel(ctx), a.ID, domain.ParseTags(pick.Topics)); err != nil {
+		log.Ctx(ctx).Warn().Err(err).Msgf("votes on post %d count for no theme until article %d is tagged", postID, a.ID)
+	}
 	return nil
 }
 
