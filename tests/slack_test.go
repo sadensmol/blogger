@@ -47,6 +47,7 @@ const (
 	tokenLinePrefix       = "Tokens used:"
 	tokenLineNoCall       = "Tokens used: 0 (no LLM call)"
 	tokenLineOneClaudeRun = "Tokens used: 41,181 (claude: 41,055 in, 126 out)"
+	tokenLineTwoClaudeRuns = "Tokens used: 82,362 (claude: 82,110 in, 252 out)"
 	maxSectionRunes       = 3000
 )
 
@@ -237,6 +238,7 @@ func (s *SlackTestSuite) replyURL() string {
 
 func (s *SlackTestSuite) insertBlogWithArticle() int64 {
 	s.feeds.Set(slackFeedPath, rssType, fmt.Sprintf(itemsFmt, fmt.Sprintf(itemFmt, slackArticle, s.articleURL())))
+	answerGoTags(s.agents, s.articleURL())
 	sourceID, err := s.sources.Insert(s.Ctx, testsrepository.SourceRow{
 		FeedURL: fmt.Sprintf("%s%s", s.feeds.URL(), slackFeedPath),
 		Title:   blogTitle,
@@ -744,7 +746,7 @@ func (s *SlackTestSuite) TestShowThroughCommandRepliesWithOnlyTheTokenLine() {
 
 	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
 	s.Contains(s.slack.Posted(), slackShowHeader)
-	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineOneClaudeRun)
+	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineTwoClaudeRuns)
 }
 
 func (s *SlackTestSuite) TestDiscoverThroughCommandRepliesWithOnlyTheTokenLine() {

@@ -127,12 +127,7 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	feeds := feed.NewClient(feedTimeout, feedOptions...)
 	sources := service.NewSource(repository.NewSource(db), feeds, time.Now)
 	posts := service.NewPosts(repository.NewPost(db), time.Now)
-	votes := service.NewVotes(service.VotesData{
-		Reactions: repository.NewReaction(db),
-		Posts:     posts,
-		Sources:   sources,
-		Now:       time.Now,
-	})
+	votes := service.NewVotes(repository.NewReaction(db), posts, time.Now)
 
 	var order []llm.Backend
 	for _, name := range strings.Split(cfg.Backends, ",") {

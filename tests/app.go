@@ -57,12 +57,7 @@ func NewApp(t *testing.T, d AppData) *App {
 	sources := service.NewSource(repository.NewSource(d.DB), feeds, d.Now)
 	runs := service.NewRuns(repository.NewRun(d.DB), d.Now)
 	posts := service.NewPosts(repository.NewPost(d.DB), d.Now)
-	votes := service.NewVotes(service.VotesData{
-		Reactions: repository.NewReaction(d.DB),
-		Posts:     posts,
-		Sources:   sources,
-		Now:       d.Now,
-	})
+	votes := service.NewVotes(repository.NewReaction(d.DB), posts, d.Now)
 	backends, err := llm.NewBackends(llm.Config{
 		Order:     d.Backends,
 		ClaudeBin: d.Agents.ClaudeBin,

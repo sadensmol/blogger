@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	migrationsCount = 13
+	migrationsCount = 14
 	feedURL         = "https://example.com/feed"
 	unknownSourceID = 999
 	userOne         = "U1"
@@ -344,29 +344,6 @@ func (s *StoreTestSuite) TestSourceVotesCountOnlyNotRemoved() {
 	source, err := repository.NewSource(s.DB).FindNotDeletedByID(s.Ctx, domain.SourceID(sourceID))
 
 	s.Require().NoError(err)
-	s.Equal(domain.Votes{Up: 2, Down: 1}, source.Votes)
-}
-
-func (s *StoreTestSuite) TestSourceVotesSinceStatusCountOnlyAfterStatusChange() {
-	sourceID := s.insertSource(feedURL, domain.SourceTrial)
-	runID := s.insertRun(domain.RunStatusOK)
-	var postIDs []int64
-	for _, url := range []string{"https://example.com/1", "https://example.com/2", "https://example.com/3", "https://example.com/4"} {
-		postIDs = append(postIDs, s.insertPost(s.insertArticle(sourceID, url, s.Clock.Now()), runID))
-	}
-	s.insertReaction(postIDs[0], userOne, domain.VoteUp, false)
-	s.Clock.Advance(time.Hour)
-	statusChangedAt := s.Clock.Now()
-	s.Require().NoError(s.sources.SetStatusChangedAt(s.Ctx, sourceID, statusChangedAt))
-	s.Clock.Advance(time.Hour)
-	s.insertReaction(postIDs[1], userOne, domain.VoteUp, false)
-	s.insertReaction(postIDs[2], userOne, domain.VoteDown, false)
-	s.insertReaction(postIDs[3], userOne, domain.VoteUp, true)
-
-	source, err := repository.NewSource(s.DB).FindNotDeletedByID(s.Ctx, domain.SourceID(sourceID))
-
-	s.Require().NoError(err)
-	s.Equal(domain.Votes{Up: 1, Down: 1}, source.VotesSinceStatus)
 	s.Equal(domain.Votes{Up: 2, Down: 1}, source.Votes)
 }
 

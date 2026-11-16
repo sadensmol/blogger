@@ -93,6 +93,10 @@ func (s *DigestTestSuite) TestShowSumsCodexTurnsAcrossBlankEventLines() {
 	s.addBlog("a")
 	s.learnedProfile()
 	s.agents.Fail(llm.Claude)
+	s.agents.Answer(llm.Codex, llm.SkillTagArticles, map[string]any{"articles": []map[string]any{{
+		"url": s.articleURL("a"), "tags": []string{"go"},
+	}}})
+	s.agents.CodexUsage(llm.SkillTagArticles, 100, 5)
 	s.agents.Answer(llm.Codex, llm.SkillPickArticles, map[string]any{"picks": []map[string]any{{
 		"url": s.articleURL("a"), "description": "A post.", "topics": []string{"go"}, "reason": "Matches Go.",
 	}}})
@@ -103,7 +107,7 @@ func (s *DigestTestSuite) TestShowSumsCodexTurnsAcrossBlankEventLines() {
 	s.Require().NoError(err)
 	replies := s.slack.Replies()
 	s.Require().Len(replies, 1)
-	requireOnlyTokenLine(s.T(), replies[0], "Tokens used: 2,050 (claude: not reported; codex: 2,000 in, 50 out)")
+	requireOnlyTokenLine(s.T(), replies[0], "Tokens used: 2,155 (claude: not reported; codex: 2,100 in, 55 out)")
 }
 
 func (s *SlackTestSuite) TestDiscoverWhoseTokenReplyIsRejectedLogsItAndSucceeds() {

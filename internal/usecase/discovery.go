@@ -59,7 +59,11 @@ func (d *Discovery) discover(ctx context.Context) (int, llm.Backend, error) {
 		return 0, "", nil
 	}
 
-	proposals, backend, err := d.llm.DiscoverBlogs(ctx, sources, nil, discoveryAsked)
+	themes, err := d.votes.Themes(ctx)
+	if err != nil {
+		return 0, "", fmt.Errorf("cannot read the theme scores: %w", err)
+	}
+	proposals, backend, err := d.llm.DiscoverBlogs(ctx, sources, themes, discoveryAsked)
 	if err != nil {
 		return 0, "", fmt.Errorf("cannot ask for blogs: %w", err)
 	}

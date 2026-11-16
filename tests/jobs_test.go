@@ -57,6 +57,7 @@ func (s *JobsTestSuite) SetupTest() {
 		"url": s.articleURL(), "description": "A post.", "topics": []string{"go"}, "reason": "Matches Go.",
 	}}})
 	s.agents.Answer(llm.Claude, llm.SkillDiscoverBlogs, map[string]any{"blogs": []map[string]any{}})
+	answerGoTags(s.agents, s.articleURL())
 }
 
 func (s *JobsTestSuite) TearDownTest() {

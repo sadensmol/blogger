@@ -56,6 +56,7 @@ type DigestTestSuite struct {
 	versions    *testsrepository.ProfileVersion
 	digest      *usecase.Digest
 	votes       *service.Votes
+	blogURLs    []string
 }
 
 func TestDigestTestSuite(t *testing.T) {
@@ -74,6 +75,7 @@ func (s *DigestTestSuite) SetupTest() {
 	s.reactions = testsrepository.NewReaction(s.DB)
 	s.runs = testsrepository.NewRun(s.DB)
 	s.versions = testsrepository.NewProfileVersion(s.DB)
+	s.blogURLs = nil
 
 	location, err := time.LoadLocation("Europe/Berlin")
 	s.Require().NoError(err)
@@ -108,10 +110,20 @@ func (s *DigestTestSuite) articleURL(name string) string {
 	return fmt.Sprintf("%s/%s", s.feeds.URL(), name)
 }
 
+// answerGoTags makes the fake claude tag each of the urls "go".
+func answerGoTags(agents *tests.FakeAgents, urls ...string) {
+	articles := make([]map[string]any, 0, len(urls))
+	for _, url := range urls {
+		articles = append(articles, map[string]any{"url": url, "tags": []string{"go"}})
+	}
+	agents.Answer(llm.Claude, llm.SkillTagArticles, map[string]any{"articles": articles})
+}
+
 func (s *DigestTestSuite) addBlog(names ...string) int64 {
 	var items strings.Builder
 	for _, name := range names {
 		fmt.Fprintf(&items, datedItemFmt, name, s.articleURL(name), s.Clock.Now().Add(-time.Hour).Format(time.RFC1123Z))
+		s.blogURLs = append(s.blogURLs, s.articleURL(name))
 	}
 	s.feeds.Set(digestFeedPath, "application/rss+xml", fmt.Sprintf(itemsFmt, items.String()))
 	id, err := s.sources.Insert(s.Ctx, testsrepository.SourceRow{
@@ -131,7 +143,9 @@ func (s *DigestTestSuite) learnedProfile() {
 	s.Require().NoError(s.versions.Insert(s.Ctx, string(domain.ProfileInit), s.Clock.Now().Add(-2*time.Hour)))
 }
 
+// answerPicks also makes claude tag the articles of the blog, so the pick follows a tag run that succeeds.
 func (s *DigestTestSuite) answerPicks(names ...string) {
+	answerGoTags(s.agents, s.blogURLs...)
 	picks := make([]map[string]any, 0, len(names))
 	for _, name := range names {
 		picks = append(picks, map[string]any{
@@ -408,7 +422,7 @@ func (s *DigestTestSuite) TestShowSuccessRepliesWithOnlyTheTokenLine() {
 	s.Require().Len(s.slack.Posted(), 2)
 	replies := s.slack.Replies()
 	s.Require().Len(replies, 1)
-	requireOnlyTokenLine(s.T(), replies[0], tokenLineOneClaudeRun)
+	requireOnlyTokenLine(s.T(), replies[0], tokenLineTwoClaudeRuns)
 }
 
 func (s *DigestTestSuite) TestShowFailureRepliesWithTheReasonAboveTheTokenLine() {
@@ -438,7 +452,7 @@ func (s *DigestTestSuite) TestShowWhereEveryAttemptFailsCountsEachAttempt() {
 	replies := s.slack.Replies()
 	s.Require().Len(replies, 1)
 	requireTextThenTokenLine(s.T(), replies[0], failureLine,
-		"Tokens used: 64,896 (claude: 41,055 in, 126 out; codex: 23,710 in, 5 out)")
+		"Tokens used: 106,077 (claude: 82,110 in, 252 out; codex: 23,710 in, 5 out)")
 }
 
 func (s *DigestTestSuite) TestShowWhereNoAgentReportsUsageSaysUnknown() {
@@ -496,10 +510,14 @@ func (s *DigestTestSuite) TestShowCountsTheProfileUpdateAndThePick() {
 	err = s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
 
 	s.Require().NoError(err)
-	s.Require().Len(s.agents.Args(llm.Claude), 2)
+	args := s.agents.Args(llm.Claude)
+	s.Require().Len(args, 3)
+	s.True(strings.HasPrefix(args[0], updatePrompt))
+	s.True(strings.HasPrefix(args[1], tagPrompt))
+	s.True(strings.HasPrefix(args[2], pickPrompt))
 	replies := s.slack.Replies()
 	s.Require().Len(replies, 1)
-	requireOnlyTokenLine(s.T(), replies[0], "Tokens used: 82,362 (claude: 82,110 in, 252 out)")
+	requireOnlyTokenLine(s.T(), replies[0], "Tokens used: 123,543 (claude: 123,165 in, 378 out)")
 }
 
 func (s *DigestTestSuite) TestShowAfterMorningDigestCountsOnlyItsOwnRun() {
@@ -512,7 +530,11 @@ func (s *DigestTestSuite) TestShowAfterMorningDigestCountsOnlyItsOwnRun() {
 	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
 
 	s.Require().NoError(err)
-	s.Require().Len(s.agents.Args(llm.Claude), 2)
+	args := s.agents.Args(llm.Claude)
+	s.Require().Len(args, 3)
+	s.True(strings.HasPrefix(args[0], tagPrompt))
+	s.True(strings.HasPrefix(args[1], pickPrompt))
+	s.True(strings.HasPrefix(args[2], pickPrompt))
 	replies := s.slack.Replies()
 	s.Require().Len(replies, 1)
 	requireOnlyTokenLine(s.T(), replies[0], tokenLineOneClaudeRun)
@@ -524,7 +546,7 @@ func (s *DigestTestSuite) TestMorningDigestSendsNoTokenLine() {
 	s.answerPicks("a")
 	s.Require().NoError(s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath)))
 	s.Require().Len(s.slack.Replies(), 1)
-	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineOneClaudeRun)
+	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineTwoClaudeRuns)
 	s.answerPicks("b")
 
 	err := s.digest.Run(s.Ctx, domain.RunKindDigestMorning)
@@ -674,9 +696,10 @@ func (s *DigestTestSuite) TestNewVotesUpdateProfileBeforePick() {
 
 	s.Require().NoError(err)
 	args := s.agents.Args(llm.Claude)
-	s.Require().Len(args, 2)
+	s.Require().Len(args, 3)
 	s.True(strings.HasPrefix(args[0], updatePrompt))
-	s.True(strings.HasPrefix(args[1], pickPrompt))
+	s.True(strings.HasPrefix(args[1], tagPrompt))
+	s.True(strings.HasPrefix(args[2], pickPrompt))
 	s.Equal(string(domain.RunStatusOK), s.latestRun(domain.RunKindProfileUpdate).Status)
 }
 
@@ -689,8 +712,9 @@ func (s *DigestTestSuite) TestNoNewVotesSkipsProfileUpdate() {
 
 	s.Require().NoError(err)
 	args := s.agents.Args(llm.Claude)
-	s.Require().Len(args, 1)
-	s.True(strings.HasPrefix(args[0], pickPrompt))
+	s.Require().Len(args, 2)
+	s.True(strings.HasPrefix(args[0], tagPrompt))
+	s.True(strings.HasPrefix(args[1], pickPrompt))
 }
 
 func (s *DigestTestSuite) TestMorningWithoutBlogsPostsNothing() {

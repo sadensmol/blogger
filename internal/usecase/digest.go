@@ -159,7 +159,21 @@ func (d *Digest) digest(ctx context.Context, kind domain.RunKind, runID domain.R
 		return "", nil
 	}
 
-	picks, backend, err := d.llm.PickArticles(ctx, llm.PickInput{Candidates: candidates, Profile: profile, Count: count})
+	tagged, err := d.articles.Tag(ctx, candidates)
+	if err != nil {
+		log.Ctx(ctx).Warn().Err(err).Msgf("digest run %d picks from candidates without new tags", runID)
+	}
+	// a failed tag job still returns the candidates with their stored tags
+	if tagged != nil {
+		candidates = tagged
+	}
+	themes, err := d.votes.Themes(ctx)
+	if err != nil {
+		return "", fmt.Errorf("cannot read the theme scores: %w", err)
+	}
+	candidates = themes.Rank(candidates)
+
+	picks, backend, err := d.llm.PickArticles(ctx, llm.PickInput{Candidates: candidates, Profile: profile, Count: count, Themes: themes})
 	// /show tells the user privately (see Show); the morning digest has nobody to answer but the channel
 	if errors.Is(err, llm.ErrAllBackendsFailed) && kind == domain.RunKindDigestMorning {
 		if postErr := d.poster.Text(ctx, pickFailedText); postErr != nil {
@@ -288,7 +302,11 @@ func (d *Digest) updateProfile(ctx context.Context, current domain.Profile) doma
 		if err != nil {
 			return "", fmt.Errorf("cannot read recent votes: %w", err)
 		}
-		profile, backend, err := d.llm.UpdateProfile(ctx, current, votes, nil)
+		themes, err := d.votes.Themes(ctx)
+		if err != nil {
+			return "", fmt.Errorf("cannot read the theme scores: %w", err)
+		}
+		profile, backend, err := d.llm.UpdateProfile(ctx, current, votes, themes)
 		if err != nil {
 			return "", fmt.Errorf("cannot update the interests file: %w", err)
 		}

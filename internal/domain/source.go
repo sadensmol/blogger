@@ -46,7 +46,6 @@ type Source struct {
 	Origin           SourceOrigin
 	StatusChangedAt  time.Time
 	Votes            Votes // all time, for lists
-	VotesSinceStatus Votes // since StatusChangedAt, for the status rule
 	FetchedAt        time.Time // the last fetch of the blog that worked
 	FetchFailedAt    time.Time // the last fetch of the blog that failed
 	BackfilledAt     time.Time // when older articles were collected
@@ -77,20 +76,6 @@ func (s Source) FeedBackedOff(now time.Time) bool {
 // is tried again a day later, three times at most.
 func (s Source) BackfillDue(now time.Time) bool {
 	return s.BackfilledAt.IsZero() && s.BackfillTries < maxBackfillTries && now.Sub(s.BackfillTriedAt) >= backfillRetryAfter
-}
-
-func (s Source) StatusAfterVotes() SourceStatus {
-	net := s.VotesSinceStatus.Net()
-	switch {
-	case s.Status == SourceActive && net <= -3:
-		return SourcePaused
-	case s.Status == SourceTrial && net >= 2:
-		return SourceActive
-	case s.Status == SourceTrial && net <= -2:
-		return SourcePaused
-	default:
-		return s.Status
-	}
 }
 
 // SourceSpec is one import entry. URL is the blog page; FeedURL is empty when the entry names no feed.

@@ -31,7 +31,6 @@ type sourceRow struct {
 	backfillTries     int
 	backfillTriedAt   sql.NullString
 	votesUp, votesDown int
-	sinceUp, sinceDown int
 }
 
 type repositorySource sourceRow
@@ -71,7 +70,6 @@ func (r repositorySource) toDomain() (domain.Source, error) {
 		Origin:           domain.SourceOrigin(r.origin),
 		StatusChangedAt:  statusChangedAt,
 		Votes:            domain.Votes{Up: r.votesUp, Down: r.votesDown},
-		VotesSinceStatus: domain.Votes{Up: r.sinceUp, Down: r.sinceDown},
 		FetchedAt:        fetchedAt,
 		FetchFailedAt:    fetchFailedAt,
 		BackfilledAt:     backfilledAt,
@@ -84,9 +82,7 @@ const sourceQueryFormat = `
 SELECT s.id, s.site_url, s.feed_url, s.title, s.reason, s.status, s.origin, s.status_changed_at,
     s.fetched_at, s.fetch_failed_at, s.backfilled_at, s.backfill_tries, s.backfill_tried_at,
     COALESCE(SUM(r.vote = 1), 0),
-    COALESCE(SUM(r.vote = -1), 0),
-    COALESCE(SUM(r.vote = 1 AND r.updated_at >= s.status_changed_at), 0),
-    COALESCE(SUM(r.vote = -1 AND r.updated_at >= s.status_changed_at), 0)
+    COALESCE(SUM(r.vote = -1), 0)
 FROM source s
 LEFT JOIN article a ON a.source_id = s.id
 LEFT JOIN post p ON p.article_id = a.id
@@ -113,7 +109,7 @@ func (r *Source) list(ctx context.Context, query string, args ...any) ([]domain.
 		var row sourceRow
 		if err := rows.Scan(&row.id, &row.siteURL, &row.feedURL, &row.title, &row.reason, &row.status, &row.origin,
 			&row.statusChangedAt, &row.fetchedAt, &row.fetchFailedAt, &row.backfilledAt, &row.backfillTries, &row.backfillTriedAt,
-			&row.votesUp, &row.votesDown, &row.sinceUp, &row.sinceDown); err != nil {
+			&row.votesUp, &row.votesDown); err != nil {
 			return nil, fmt.Errorf("cannot scan source: %w", err)
 		}
 		source, err := repositorySource(row).toDomain()

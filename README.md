@@ -175,7 +175,7 @@ Check the log: `H 'timeout 20 docker logs --tail 50 blogger'`. Look for `blogger
 
   In Docker: `H 'timeout 300 docker exec -i blogger blogger sources import --apply -' < blogs.yaml`. Without `--apply` the command only shows the changes.
 - **In Slack.** `/blogs list`, `/blogs add <url>`, `/blogs remove <id|url>`, `/blogs pause <id|url>`, `/blogs resume <id|url>`. Add a blog by the page that lists its posts. A blog without a feed is added when that page lists at least 3 articles.
-- **Suggestions.** `/discover` searches the web for blogs like the ones you rate up. It posts up to 10 blogs, each with a **+ Add** button. It needs the `claude` or `codex` backend.
+- **Suggestions.** `/discover` searches the web for blogs that write about the themes you like. It posts up to 10 blogs, each with a **+ Add** button. It needs the `claude` or `codex` backend.
 - **In Claude Code.** The `manage-blogs` skill lists, adds and removes blogs and edits your interest notes (`## My notes`). It reaches the host through `BLOGGER_BOARD_HOST` or `~/.config/blogger/board-host`.
 
 ## 9. Daily use
@@ -183,7 +183,8 @@ Check the log: `H 'timeout 20 docker logs --tail 50 blogger'`. Look for `blogger
 - Each morning at `BLOGGER_DIGEST_TIME` the bot posts up to `BLOGGER_DIGEST_SIZE` articles. When nothing is good enough, it posts one short line.
 - Type `/show` for a digest now.
 - Every command answer ends with a small line that shows the LLM tokens the command used.
-- Rate each post with 👍 or 👎. The bot learns your interests from the votes and pauses a blog with many 👎.
+- The bot gives each article up to 3 themes before it picks. A post shows them in a last `Themes:` line.
+- Rate each post with 👍 or 👎. A vote counts for the themes of the article, not for its blog. The bot prefers articles on the themes you like. Votes never pause or promote a blog: use `/blogs pause` and `/blogs resume` for that.
 - An article you did not rate may come back after `BLOGGER_REPEAT_AFTER`, at most `BLOGGER_REPEAT_MAX` times. A rated article never comes back.
 - When the bot was off at digest time, or the digest failed, it posts the missed digest when it starts again.
 

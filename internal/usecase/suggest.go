@@ -101,7 +101,11 @@ func (s *Suggest) suggest(ctx context.Context, runID domain.RunID) (llm.Backend,
 		return "", nil
 	}
 
-	blogs, backend, err := s.llm.DiscoverBlogs(ctx, sources, nil, suggestMax)
+	themes, err := s.votes.Themes(ctx)
+	if err != nil {
+		return "", fmt.Errorf("cannot read the theme scores: %w", err)
+	}
+	blogs, backend, err := s.llm.DiscoverBlogs(ctx, sources, themes, suggestMax)
 	if err != nil {
 		return "", fmt.Errorf("cannot ask for blogs: %w", err)
 	}
