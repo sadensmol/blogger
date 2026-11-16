@@ -391,7 +391,7 @@ func (s *ThemesTestSuite) TestArticleWithoutAValidTagIsAskedAgain() {
 }
 
 func (s *ThemesTestSuite) TestFailedTagJobStillPostsTheDigest() {
-	s.addBlog(domain.SourceActive, "a")
+	s.addBlog(domain.SourceActive, "a", "b")
 	s.learnedProfile()
 	s.answerPicks("a")
 
@@ -402,7 +402,8 @@ func (s *ThemesTestSuite) TestFailedTagJobStillPostsTheDigest() {
 	posted := s.slack.Posted()
 	s.Require().Len(posted, 2)
 	s.Contains(posted[1], s.articleURL("a"))
-	s.Empty(s.tagsOf("a"))
+	s.Equal([]string{"go"}, s.tagsOf("a"))
+	s.Empty(s.tagsOf("b"))
 }
 
 func (s *ThemesTestSuite) TestPostedPickEndsWithItsThemes() {
