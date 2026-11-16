@@ -288,7 +288,7 @@ func (d *Digest) updateProfile(ctx context.Context, current domain.Profile) doma
 		if err != nil {
 			return "", fmt.Errorf("cannot read recent votes: %w", err)
 		}
-		profile, backend, err := d.llm.UpdateProfile(ctx, current, votes)
+		profile, backend, err := d.llm.UpdateProfile(ctx, current, votes, nil)
 		if err != nil {
 			return "", fmt.Errorf("cannot update the interests file: %w", err)
 		}

@@ -17,6 +17,7 @@ type Article struct {
 	Excerpt     string
 	PublishedAt time.Time // zero: the date is unknown
 	Shown       int       // times it was posted before; filled by the candidate finders
+	Tags        []Tag
 }
 
 // PageLink is a link on a blog page with its text.

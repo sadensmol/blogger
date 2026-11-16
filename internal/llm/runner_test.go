@@ -306,7 +306,7 @@ func TestDiscoverUsesWebToolsAndNeverCodexOSS(t *testing.T) {
 
 	claude := newFakeAgents(t, llm.Claude)
 	claude.answer("claude", llm.SkillDiscoverBlogs, blogsAnswer())
-	_, backend, err := claude.runner().DiscoverBlogs(context.Background(), sources, 3)
+	_, backend, err := claude.runner().DiscoverBlogs(context.Background(), sources, nil, 3)
 	require.NoError(t, err)
 	require.Equal(t, llm.Claude, backend)
 	require.Contains(t, claude.read("claude.args"), "WebSearch")
@@ -314,7 +314,7 @@ func TestDiscoverUsesWebToolsAndNeverCodexOSS(t *testing.T) {
 	local := newFakeAgents(t, llm.CodexOSS)
 	local.cfg.LocalModel = LocalModel
 	local.answer("codex", llm.SkillDiscoverBlogs, blogsAnswer())
-	_, _, err = local.runner().DiscoverBlogs(context.Background(), sources, 3)
+	_, _, err = local.runner().DiscoverBlogs(context.Background(), sources, nil, 3)
 	require.ErrorIs(t, err, llm.ErrAllBackendsFailed)
 	local.requireNotRun("codex")
 }
@@ -360,7 +360,7 @@ func TestUpdateProfileWithoutLearnedFallsBack(t *testing.T) {
 	f.answer("codex", llm.SkillUpdateProfile, map[string]any{"interests_md": "# Interests\n\n## My notes\nGo and SQLite.\n\n## Learned\nLikes databases.\n"})
 	votes := []domain.VotedArticle{{Article: pickInput().Candidates[0], Topics: []string{"go"}, Vote: domain.VoteUp}}
 
-	_, backend, err := f.runner().UpdateProfile(context.Background(), CurrentProfile, votes)
+	_, backend, err := f.runner().UpdateProfile(context.Background(), CurrentProfile, votes, nil)
 
 	require.NoError(t, err)
 	require.Equal(t, llm.Codex, backend)

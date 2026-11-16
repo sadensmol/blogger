@@ -18,18 +18,20 @@ const (
 
 type DiscoveryData struct {
 	Sources *service.Source
+	Votes   *service.Votes
 	Runs    *service.Runs
 	LLM     *llm.Runner
 }
 
 type Discovery struct {
 	sources *service.Source
+	votes   *service.Votes
 	runs    *service.Runs
 	llm     *llm.Runner
 }
 
 func NewDiscovery(d DiscoveryData) *Discovery {
-	return &Discovery{sources: d.Sources, runs: d.Runs, llm: d.LLM}
+	return &Discovery{sources: d.Sources, votes: d.Votes, runs: d.Runs, llm: d.LLM}
 }
 
 // Run returns how many trial blogs it added.
@@ -57,7 +59,7 @@ func (d *Discovery) discover(ctx context.Context) (int, llm.Backend, error) {
 		return 0, "", nil
 	}
 
-	proposals, backend, err := d.llm.DiscoverBlogs(ctx, sources, discoveryAsked)
+	proposals, backend, err := d.llm.DiscoverBlogs(ctx, sources, nil, discoveryAsked)
 	if err != nil {
 		return 0, "", fmt.Errorf("cannot ask for blogs: %w", err)
 	}

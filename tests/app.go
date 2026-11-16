@@ -112,11 +112,13 @@ func NewApp(t *testing.T, d AppData) *App {
 		}),
 		Discovery: usecase.NewDiscovery(usecase.DiscoveryData{
 			Sources: sources,
+			Votes:   votes,
 			Runs:    runs,
 			LLM:     runner,
 		}),
 		Suggest: usecase.NewSuggest(usecase.SuggestData{
 			Sources:   sources,
+			Votes:     votes,
 			Proposals: service.NewProposals(repository.NewProposal(d.DB), d.Now),
 			Runs:      runs,
 			LLM:       runner,

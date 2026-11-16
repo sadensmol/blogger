@@ -20,6 +20,7 @@ type PickInput struct {
 	Candidates []domain.Article
 	Profile    domain.Profile
 	Count      domain.PickCount
+	Themes     domain.Themes
 }
 
 type pickJobInput struct {
@@ -142,7 +143,7 @@ func (v domainVotedArticle) toVoteJSON() voteJSON {
 	}
 }
 
-func (r *Runner) UpdateProfile(ctx context.Context, p domain.Profile, votes []domain.VotedArticle) (domain.Profile, Backend, error) {
+func (r *Runner) UpdateProfile(ctx context.Context, p domain.Profile, votes []domain.VotedArticle, themes domain.Themes) (domain.Profile, Backend, error) {
 	votesJSON := make([]voteJSON, 0, len(votes))
 	for _, v := range votes {
 		votesJSON = append(votesJSON, domainVotedArticle(v).toVoteJSON())
@@ -283,7 +284,7 @@ func (b blogJSON) toDomain() (domain.BlogProposal, error) {
 	return domain.BlogProposal{SiteURL: siteURL, FeedURL: feedURL, Title: string(title), About: string(about), Reason: b.Reason}, nil
 }
 
-func (r *Runner) DiscoverBlogs(ctx context.Context, sources []domain.Source, max int) ([]domain.BlogProposal, Backend, error) {
+func (r *Runner) DiscoverBlogs(ctx context.Context, sources []domain.Source, themes domain.Themes, max int) ([]domain.BlogProposal, Backend, error) {
 	sourcesJSON := make([]sourceJSON, 0, len(sources))
 	for _, s := range sources {
 		sourcesJSON = append(sourcesJSON, domainSource(s).toSourceJSON())

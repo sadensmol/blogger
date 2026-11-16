@@ -521,3 +521,7 @@ func (a *Articles) store(ctx context.Context, sourceID domain.SourceID, item fee
 		PublishedAt: item.PublishedAt,
 	}, a.now())
 }
+
+func (a *Articles) Tag(ctx context.Context, articles []domain.Article) ([]domain.Article, error) {
+	return articles, nil
+}

@@ -80,3 +80,7 @@ func (v *Votes) apply(
 	}
 	return nil
 }
+
+func (v *Votes) Themes(ctx context.Context) (domain.Themes, error) {
+	return domain.Themes{}, nil
+}

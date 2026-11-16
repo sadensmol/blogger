@@ -175,6 +175,7 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 	poster := slackpost.NewPoster(api, slackHTTP, cfg.SlackChannelID)
 	suggest := usecase.NewSuggest(usecase.SuggestData{
 		Sources:   sources,
+		Votes:     votes,
 		Proposals: service.NewProposals(repository.NewProposal(db), time.Now),
 		Runs:      runs,
 		LLM:       runner,
@@ -196,6 +197,7 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 		}),
 		Discovery: usecase.NewDiscovery(usecase.DiscoveryData{
 			Sources: sources,
+			Votes:   votes,
 			Runs:    runs,
 			LLM:     runner,
 		}),

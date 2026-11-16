@@ -220,7 +220,7 @@ func TestEveryJobOfOneMeterCounts(t *testing.T) {
 	runner := f.runner()
 	ctx, meter := llm.WithMeter(context.Background())
 
-	_, _, err := runner.UpdateProfile(ctx, CurrentProfile, votes)
+	_, _, err := runner.UpdateProfile(ctx, CurrentProfile, votes, nil)
 	require.NoError(t, err)
 	_, _, err = runner.PickArticles(ctx, pickInput())
 	require.NoError(t, err)
