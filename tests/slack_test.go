@@ -301,9 +301,24 @@ func (s *SlackTestSuite) answerBlogs(paths ...string) {
 	s.agents.Answer(llm.Claude, llm.SkillDiscoverBlogs, map[string]any{"blogs": blogs})
 }
 
+// discover waits for the posted proposals too: the run stores their message ts after the post.
 func (s *SlackTestSuite) discover() {
 	s.Equal(slackLooking, s.ack(s.ownerCommand("/discover", "")))
-	s.Eventually(func() bool { return s.runsOf(domain.RunKindSuggest) == 1 && len(s.slack.Posted()) == 1 }, slackWait, slackPoll)
+	s.Eventually(func() bool {
+		if s.runsOf(domain.RunKindSuggest) != 1 || len(s.slack.Posted()) != 1 {
+			return false
+		}
+		proposals, err := s.proposals.List(s.Ctx)
+		if err != nil {
+			return false
+		}
+		for _, p := range proposals {
+			if p.MessageTS == "" {
+				return false
+			}
+		}
+		return true
+	}, slackWait, slackPoll)
 }
 
 func (s *SlackTestSuite) listProposals() []testsrepository.ProposalRow {
