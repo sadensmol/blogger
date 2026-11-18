@@ -25,6 +25,7 @@ import (
 const (
 	showReplyFailedLog     = "cannot answer /show"
 	discoverReplyFailedLog = "cannot answer /discover"
+	notInChannelCode       = "not_in_channel"
 )
 
 type syncLog struct {
@@ -59,30 +60,93 @@ func rejectingReplyURL(t *testing.T) string {
 	return fmt.Sprintf("%s/response/rejected", server.URL)
 }
 
-func (s *DigestTestSuite) TestShowWhoseTokenReplyIsRejectedLogsItAndSucceeds() {
+func (s *DigestTestSuite) TestShowWhoseAnswersAreBothRefusedLogsItAndSucceeds() {
 	s.addBlog("a")
 	s.learnedProfile()
 	s.answerPicks("a")
+	s.slack.EphemeralError = notInChannelCode
 	ctx, logs := loggedContext(s.Ctx)
 
 	err := s.digest.Show(ctx, rejectingReplyURL(s.T()))
 
 	s.Require().NoError(err)
 	s.Len(s.slack.Posted(), 2)
+	calls := s.slack.Calls()
+	s.Require().NotEmpty(calls)
+	s.Equal(tests.SlackCall{Method: ephemeralCall, Text: tokenLineTwoClaudeRuns, Error: notInChannelCode}, calls[len(calls)-1])
 	s.Contains(logs.String(), showReplyFailedLog)
 }
 
-func (s *DigestTestSuite) TestShowFailureWhoseTokenReplyIsRejectedReturnsTheRunError() {
+func (s *DigestTestSuite) TestShowFailureWhoseAnswersAreBothRefusedReturnsTheRunError() {
 	s.addBlog("a")
 	s.learnedProfile()
 	s.agents.Fail(llm.Claude)
 	s.agents.Fail(llm.Codex)
+	s.slack.EphemeralError = notInChannelCode
 	ctx, logs := loggedContext(s.Ctx)
 
 	err := s.digest.Show(ctx, rejectingReplyURL(s.T()))
 
 	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
+	s.Equal([]tests.SlackCall{{Method: ephemeralCall, Text: failureLine, Error: notInChannelCode}}, s.slack.Calls())
 	s.Contains(logs.String(), showReplyFailedLog)
+}
+
+func (s *DigestTestSuite) TestShowFailureAfterSomePostsAnswersTheOwnerAfterThem() {
+	const showFailedLine = "Could not make the digest. See the logs."
+	s.addBlog("a", "b")
+	s.learnedProfile()
+	s.answerPicks("a", "b")
+	s.slack.PostFaults = []tests.PostFault{tests.PostOK, tests.PostOK, tests.PostDropped}
+
+	err := s.show()
+
+	s.Require().Error(err)
+	s.Equal([]string{
+		"chat.postMessage", "chat.postMessage", "reactions.add", "reactions.add", "chat.postMessage", ephemeralCall,
+	}, callMethods(s.slack.Calls()))
+	s.Len(s.slack.Posted(), 3)
+	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), showFailedLine, tokenLineTwoClaudeRuns)
+	s.Empty(s.slack.Replies())
+}
+
+func (s *DigestTestSuite) TestShowWhosePrivateMessageIsRefusedAnswersThroughTheReplyURL() {
+	s.addBlog("a")
+	s.learnedProfile()
+	s.answerPicks("a")
+	s.slack.EphemeralError = notInChannelCode
+	ctx, logs := loggedContext(s.Ctx)
+
+	err := s.digest.Show(ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
+
+	s.Require().NoError(err)
+	s.Equal([]string{
+		"chat.postMessage", "chat.postMessage", "reactions.add", "reactions.add", ephemeralCall, tests.ResponseCall,
+	}, callMethods(s.slack.Calls()))
+	s.Require().Len(s.slack.Replies(), 1)
+	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineTwoClaudeRuns)
+	s.Contains(logs.String(), notInChannelCode)
+	s.NotContains(logs.String(), showReplyFailedLog)
+}
+
+func (s *DigestTestSuite) TestShowFailureWhosePrivateMessageIsRefusedAnswersTheReasonThroughTheReplyURL() {
+	s.addBlog("a")
+	s.learnedProfile()
+	s.agents.Fail(llm.Claude)
+	s.agents.Fail(llm.Codex)
+	s.slack.EphemeralError = notInChannelCode
+	ctx, logs := loggedContext(s.Ctx)
+
+	err := s.digest.Show(ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
+
+	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
+	s.Equal([]tests.SlackCall{
+		{Method: ephemeralCall, Text: failureLine, Error: notInChannelCode},
+		{Method: tests.ResponseCall, Text: failureLine},
+	}, s.slack.Calls())
+	s.Require().Len(s.slack.Replies(), 1)
+	requireTextThenTokenLine(s.T(), s.slack.Replies()[0], failureLine, "Tokens used: unknown (claude: not reported; codex: not reported)")
+	s.Contains(logs.String(), notInChannelCode)
 }
 
 func (s *DigestTestSuite) TestShowSumsCodexTurnsAcrossBlankEventLines() {
@@ -105,21 +169,55 @@ func (s *DigestTestSuite) TestShowSumsCodexTurnsAcrossBlankEventLines() {
 	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
 
 	s.Require().NoError(err)
-	replies := s.slack.Replies()
-	s.Require().Len(replies, 1)
-	requireOnlyTokenLine(s.T(), replies[0], "Tokens used: 2,155 (claude: not reported; codex: 2,100 in, 55 out)")
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), "Tokens used: 2,155 (claude: not reported; codex: 2,100 in, 55 out)")
 }
 
-func (s *SlackTestSuite) TestDiscoverWhoseTokenReplyIsRejectedLogsItAndSucceeds() {
+func (s *SlackTestSuite) TestDiscoverWhoseAnswersAreBothRefusedLogsItAndSucceeds() {
 	s.insertBlogWithArticle()
 	s.answerBlogs(slackFeedPath, deadFeedPath)
+	s.slack.EphemeralError = notInChannelCode
 	ctx, logs := loggedContext(s.Ctx)
 
 	err := s.newApp(llm.Claude).Suggest.Run(ctx, rejectingReplyURL(s.T()))
 
 	s.Require().NoError(err)
 	s.Equal([]string{"Found no new blogs that can be read. Try again later."}, s.slack.Posted())
+	s.Equal([]string{"chat.postMessage", ephemeralCall}, callMethods(s.slack.Calls()))
 	s.Contains(logs.String(), discoverReplyFailedLog)
+}
+
+func (s *SlackTestSuite) TestDiscoverWhosePrivateMessageIsRefusedAnswersThroughTheReplyURL() {
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+	s.slack.EphemeralError = notInChannelCode
+	ctx, logs := loggedContext(s.Ctx)
+
+	err := s.newApp(llm.Claude).Suggest.Run(ctx, s.replyURL())
+
+	s.Require().NoError(err)
+	s.Equal([]string{"chat.postMessage", ephemeralCall, tests.ResponseCall}, callMethods(s.slack.Calls()))
+	s.Require().Len(s.slack.Replies(), 1)
+	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineOneClaudeRun)
+	s.Contains(logs.String(), notInChannelCode)
+	s.NotContains(logs.String(), discoverReplyFailedLog)
+}
+
+func (s *SlackTestSuite) TestDiscoverFailureAnswersTheOwnerWithTheReasonAndTheTokenLine() {
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+	s.slack.PostFaults = []tests.PostFault{tests.PostDropped}
+
+	err := s.newApp(llm.Claude).Suggest.Run(s.Ctx, s.replyURL())
+
+	s.Require().Error(err)
+	s.Equal([]string{"chat.postMessage", ephemeralCall}, callMethods(s.slack.Calls()))
+	s.Len(s.slack.Posted(), 1)
+	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), "Could not look for blogs. See the logs.", tokenLineOneClaudeRun)
+	s.Empty(s.slack.Replies())
 }
 
 func (s *SlackTestSuite) TestDiscoverWhileBusyAddsTheZeroTokenLine() {

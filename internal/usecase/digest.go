@@ -43,6 +43,7 @@ type DigestData struct {
 	Size     int
 	Location *time.Location
 	Now      func() time.Time
+	OwnerID  string
 }
 
 type Digest struct {
@@ -57,6 +58,7 @@ type Digest struct {
 	size     int
 	location *time.Location
 	now      func() time.Time
+	ownerID  string
 }
 
 func NewDigest(d DigestData) *Digest {
@@ -72,10 +74,11 @@ func NewDigest(d DigestData) *Digest {
 		size:     d.Size,
 		location: d.Location,
 		now:      d.Now,
+		ownerID:  d.OwnerID,
 	}
 }
 
-// Show runs digest-show and always answers the slash command privately with the tokens it used.
+// Show runs digest-show and always answers the owner privately with the tokens it used.
 // A failure puts its reason above them: a failed post never reaches the channel.
 func (d *Digest) Show(ctx context.Context, replyURL string) error {
 	ctx, meter := llm.WithMeter(ctx)
@@ -86,8 +89,12 @@ func (d *Digest) Show(ctx context.Context, replyURL string) error {
 	if err != nil {
 		text = slackpost.Escape(showFailure(err))
 	}
-	if replyErr := d.poster.ReplyWithUsage(ctx, replyURL, text, usage); replyErr != nil {
-		log.Ctx(ctx).Error().Err(replyErr).Msg("cannot answer /show")
+	// a private channel message takes its place after the run's posts; a reply-URL answer can show above them
+	if ephemeralErr := d.poster.Ephemeral(ctx, d.ownerID, text, usage); ephemeralErr != nil {
+		log.Ctx(ctx).Warn().Err(ephemeralErr).Msg("slack refused the private /show answer: sending it to the reply URL")
+		if replyErr := d.poster.ReplyWithUsage(ctx, replyURL, text, usage); replyErr != nil {
+			log.Ctx(ctx).Error().Err(replyErr).Msg("cannot answer /show")
+		}
 	}
 	return err
 }

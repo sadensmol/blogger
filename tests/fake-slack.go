@@ -32,6 +32,9 @@ type FakeSlack struct {
 	// PostFaults answers the chat.postMessage calls in order; calls past the list succeed
 	PostFaults []PostFault
 
+	// EphemeralError makes chat.postEphemeral answer ok:false with this error code
+	EphemeralError string
+
 	// a call to BlockMethod runs OnBlock, then waits until the client gives up
 	BlockMethod string
 	OnBlock     func()
@@ -45,12 +48,29 @@ type FakeSlack struct {
 	reactions []string
 	replies   []string
 	acks      []string
+	ephemeral []SlackEphemeral
+	calls     []SlackCall
 	counter   int
 	postCalls int
+	// channelFault is the error code of a channel-level post fault; slack refuses private messages to that channel too
+	channelFault string
 }
 
 type SlackUpdate struct {
 	Channel, TS, Blocks string
+}
+
+// SlackEphemeral is a private channel message; Message holds its text and blocks as one JSON object.
+type SlackEphemeral struct {
+	Channel, User, Message string
+}
+
+const ResponseCall = "response"
+
+// SlackCall is one call the bot made, in the order slack got them; Error is slack's error code of a refused call.
+// Method is the web API method, or ResponseCall for a reply to a response URL.
+type SlackCall struct {
+	Method, Text, Error string
 }
 
 func NewFakeSlack() *FakeSlack {
@@ -88,6 +108,11 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/response/") {
 		raw, _ := io.ReadAll(r.Body)
 		f.replies = append(f.replies, string(raw))
+		var reply struct {
+			Text string `json:"text"`
+		}
+		_ = json.Unmarshal(raw, &reply)
+		f.calls = append(f.calls, SlackCall{Method: ResponseCall, Text: reply.Text})
 		w.WriteHeader(http.StatusOK)
 		return
 	}
@@ -107,17 +132,24 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.postCalls++
 		if fault == PostRejected {
+			f.channelFault = "channel_not_found"
+			f.calls = append(f.calls, SlackCall{Method: method, Text: r.PostForm.Get("text"), Error: "channel_not_found"})
 			fmt.Fprint(w, `{"ok":false,"error":"channel_not_found"}`)
 			return
 		}
 		if fault == PostNotInChannel {
+			f.channelFault = "not_in_channel"
+			f.calls = append(f.calls, SlackCall{Method: method, Text: r.PostForm.Get("text"), Error: "not_in_channel"})
 			fmt.Fprint(w, `{"ok":false,"error":"not_in_channel"}`)
 			return
 		}
 		if tooLongSection(r.PostForm.Get("blocks")) {
+			f.calls = append(f.calls, SlackCall{Method: method, Text: r.PostForm.Get("text"), Error: "invalid_blocks"})
 			fmt.Fprint(w, `{"ok":false,"error":"invalid_blocks"}`)
 			return
 		}
+		f.calls = append(f.calls, SlackCall{Method: method, Text: r.PostForm.Get("text")})
+		f.channelFault = ""
 		f.counter++
 		f.posted = append(f.posted, r.PostForm.Get("text"))
 		f.postForms = append(f.postForms, r.PostForm)
@@ -139,8 +171,12 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		f.updates = append(f.updates, SlackUpdate{Channel: r.PostForm.Get("channel"), TS: r.PostForm.Get("ts"), Blocks: r.PostForm.Get("blocks")})
 		fmt.Fprintf(w, `{"ok":true,"channel":%q,"ts":%q}`, r.PostForm.Get("channel"), r.PostForm.Get("ts"))
 	case "reactions.add":
-		f.reactions = append(f.reactions, fmt.Sprintf("%s:%s", r.PostForm.Get("timestamp"), r.PostForm.Get("name")))
+		reaction := fmt.Sprintf("%s:%s", r.PostForm.Get("timestamp"), r.PostForm.Get("name"))
+		f.reactions = append(f.reactions, reaction)
+		f.calls = append(f.calls, SlackCall{Method: method, Text: reaction})
 		_, _ = w.Write([]byte(`{"ok":true}`))
+	case "chat.postEphemeral":
+		f.serveEphemeral(w, r.PostForm)
 	case "apps.connections.open":
 		fmt.Fprintf(w, `{"ok":true,"url":"ws%s/socket"}`, strings.TrimPrefix(f.URL, "http"))
 	case "auth.test":
@@ -148,6 +184,65 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		_, _ = w.Write([]byte(`{"ok":false,"error":"unknown_method"}`))
 	}
+}
+
+// serveEphemeral answers chat.postEphemeral like slack: channel and user are required, the bot must be in the channel.
+func (f *FakeSlack) serveEphemeral(w http.ResponseWriter, form url.Values) {
+	text, rawBlocks := form.Get("text"), form.Get("blocks")
+	refuse := func(code string) {
+		f.calls = append(f.calls, SlackCall{Method: "chat.postEphemeral", Text: text, Error: code})
+		fmt.Fprintf(w, `{"ok":false,"error":%q}`, code)
+	}
+	switch {
+	case f.EphemeralError != "":
+		refuse(f.EphemeralError)
+		return
+	case f.channelFault != "":
+		refuse(f.channelFault)
+		return
+	case form.Get("channel") == "":
+		refuse("channel_not_found")
+		return
+	case form.Get("user") == "":
+		refuse("user_not_in_channel")
+		return
+	case rawBlocks == "" && text == "":
+		refuse("no_text")
+		return
+	case tooLongSection(rawBlocks):
+		refuse("invalid_blocks")
+		return
+	}
+	if rawBlocks == "" {
+		rawBlocks = "null"
+	}
+	encodedText, err := json.Marshal(text)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	f.counter++
+	f.ephemeral = append(f.ephemeral, SlackEphemeral{
+		Channel: form.Get("channel"),
+		User:    form.Get("user"),
+		Message: fmt.Sprintf(`{"text":%s,"blocks":%s}`, encodedText, rawBlocks),
+	})
+	f.calls = append(f.calls, SlackCall{Method: "chat.postEphemeral", Text: text})
+	fmt.Fprintf(w, `{"ok":true,"message_ts":"%d.000200"}`, f.counter)
+}
+
+// Ephemerals returns the private channel messages that slack accepted.
+func (f *FakeSlack) Ephemerals() []SlackEphemeral {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]SlackEphemeral(nil), f.ephemeral...)
+}
+
+// Calls returns every post, reaction, private message and response URL reply, in the order slack got them.
+func (f *FakeSlack) Calls() []SlackCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]SlackCall(nil), f.calls...)
 }
 
 func (f *FakeSlack) Posted() []string {

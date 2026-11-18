@@ -176,3 +176,54 @@ func (s *PosterTestSuite) TestPickReturnsPostWhenReactionFails() {
 	s.Equal(posterChannelID, channel)
 	s.Len(s.fake.Posted(), 1)
 }
+
+func (s *PosterTestSuite) TestEphemeralPostsTextAndTheTokenLineToTheUserInTheChannel() {
+	const posterUser, text = "U1", "hello there"
+
+	err := s.poster.Ephemeral(s.T().Context(), posterUser, text, domain.TokenUsage{})
+
+	s.Require().NoError(err)
+	ephemerals := s.fake.Ephemerals()
+	s.Require().Len(ephemerals, 1)
+	s.Equal(posterChannelID, ephemerals[0].Channel)
+	s.Equal(posterUser, ephemerals[0].User)
+	requireTextThenTokenLine(s.T(), ephemerals[0].Message, text, tokenLineNoCall)
+	s.Empty(s.fake.Posted())
+	s.Empty(s.fake.Replies())
+}
+
+func (s *PosterTestSuite) TestEphemeralWithoutTextFallsBackToTheTokenLine() {
+	const posterUser = "U1"
+
+	err := s.poster.Ephemeral(s.T().Context(), posterUser, "", domain.TokenUsage{})
+
+	s.Require().NoError(err)
+	ephemerals := s.fake.Ephemerals()
+	s.Require().Len(ephemerals, 1)
+	requireOnlyTokenLine(s.T(), ephemerals[0].Message, tokenLineNoCall)
+	s.Equal(tokenLineNoCall, parseSlackMessage(s.T(), ephemerals[0].Message).Text)
+}
+
+func (s *PosterTestSuite) TestEphemeralSplitsALongTextIntoSections() {
+	const posterUser, lineRunes, lines = "U1", 1000, 5
+	text := strings.TrimSuffix(strings.Repeat(fmt.Sprintf("%s\n", strings.Repeat("é", lineRunes)), lines), "\n")
+
+	err := s.poster.Ephemeral(s.T().Context(), posterUser, text, domain.TokenUsage{})
+
+	s.Require().NoError(err)
+	ephemerals := s.fake.Ephemerals()
+	s.Require().Len(ephemerals, 1)
+	requireTextThenTokenLine(s.T(), ephemerals[0].Message, text, tokenLineNoCall)
+	s.Len(parseSlackMessage(s.T(), ephemerals[0].Message).Blocks, 4)
+}
+
+func (s *PosterTestSuite) TestEphemeralRefusedBySlackReturnsItsCode() {
+	const posterUser = "U1"
+	s.fake.EphemeralError = "not_in_channel"
+
+	err := s.poster.Ephemeral(s.T().Context(), posterUser, "hello there", domain.TokenUsage{})
+
+	s.Require().Error(err)
+	s.Equal("not_in_channel", slackpost.ErrorCode(err))
+	s.Empty(s.fake.Ephemerals())
+}

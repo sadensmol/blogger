@@ -28,6 +28,7 @@ type SuggestData struct {
 	Runs      *service.Runs
 	LLM       *llm.Runner
 	Poster    *slackpost.Poster
+	OwnerID   string
 }
 
 // Suggest answers /discover: it shows new blogs with add buttons and adds the one the owner clicks.
@@ -38,6 +39,7 @@ type Suggest struct {
 	runs      *service.Runs
 	llm       *llm.Runner
 	poster    *slackpost.Poster
+	ownerID   string
 }
 
 func NewSuggest(d SuggestData) *Suggest {
@@ -48,10 +50,11 @@ func NewSuggest(d SuggestData) *Suggest {
 		runs:      d.Runs,
 		llm:       d.LLM,
 		poster:    d.Poster,
+		ownerID:   d.OwnerID,
 	}
 }
 
-// Run always answers the slash command privately with the tokens it used.
+// Run always answers the owner privately with the tokens it used.
 // A failure puts its reason above them: a failure never reaches the channel.
 func (s *Suggest) Run(ctx context.Context, replyURL string) error {
 	ctx, meter := llm.WithMeter(ctx)
@@ -64,8 +67,12 @@ func (s *Suggest) Run(ctx context.Context, replyURL string) error {
 	if err != nil {
 		text = slackpost.Escape(suggestFailure(err))
 	}
-	if replyErr := s.poster.ReplyWithUsage(ctx, replyURL, text, usage); replyErr != nil {
-		log.Ctx(ctx).Error().Err(replyErr).Msg("cannot answer /discover")
+	// a private channel message takes its place after the blog list; a reply-URL answer can show above it
+	if ephemeralErr := s.poster.Ephemeral(ctx, s.ownerID, text, usage); ephemeralErr != nil {
+		log.Ctx(ctx).Warn().Err(ephemeralErr).Msg("slack refused the private /discover answer: sending it to the reply URL")
+		if replyErr := s.poster.ReplyWithUsage(ctx, replyURL, text, usage); replyErr != nil {
+			log.Ctx(ctx).Error().Err(replyErr).Msg("cannot answer /discover")
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("cannot suggest blogs: %w", err)

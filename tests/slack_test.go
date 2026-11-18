@@ -29,7 +29,7 @@ import (
 )
 
 const (
-	slackOwnerID    = "UOWNER"
+	slackOwnerID    = tests.OwnerID
 	slackFeedPath   = "/slack.xml"
 	slackArticle    = "a"
 	slackWait       = 10 * time.Second
@@ -107,6 +107,27 @@ func requireOnlyTokenLine(t *testing.T, raw, tokenLine string) {
 	require.Len(t, msg.Blocks, 1)
 	requireTokenLineBlock(t, msg.Blocks[0], tokenLine)
 	require.Contains(t, []string{"", tokenLine}, msg.Text)
+}
+
+const ephemeralCall = "chat.postEphemeral"
+
+// ownerAnswer checks that the run answered with one private channel message to the owner and returns that message.
+func ownerAnswer(t *testing.T, fake *tests.FakeSlack) string {
+	t.Helper()
+
+	ephemerals := fake.Ephemerals()
+	require.Len(t, ephemerals, 1)
+	require.Equal(t, digestChannelID, ephemerals[0].Channel)
+	require.Equal(t, slackOwnerID, ephemerals[0].User)
+	return ephemerals[0].Message
+}
+
+func callMethods(calls []tests.SlackCall) []string {
+	methods := make([]string, 0, len(calls))
+	for _, call := range calls {
+		methods = append(methods, call.Method)
+	}
+	return methods
 }
 
 func requireNoTokenLine(t *testing.T, raw string) {
@@ -388,8 +409,10 @@ func (s *SlackTestSuite) TestShowThatCannotPostRepliesWhyThroughResponseURL() {
 	text := s.ack(s.ownerCommand("/show", ""))
 
 	s.Equal(slackPicking, text)
-	s.Eventually(func() bool { return len(s.slack.Replies()) > 0 }, slackWait, slackPoll)
-	s.Contains(s.slack.Replies()[0], "the bot is not in this channel")
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	s.Equal([]string{"chat.postMessage", ephemeralCall, tests.ResponseCall}, callMethods(s.slack.Calls()))
+	s.Contains(parseSlackMessage(s.T(), s.slack.Replies()[0]).Text, "the bot is not in this channel")
+	s.Empty(s.slack.Ephemerals())
 	s.Empty(s.slack.Posted())
 }
 
@@ -602,8 +625,7 @@ func (s *SlackTestSuite) TestOwnerAddClickAddsBlogAndMarksIt() {
 	s.setGoodFeed(second)
 	s.answerBlogs(first, second)
 	s.discover()
-	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
-	discoverReplies := s.slack.Replies()
+	s.Require().Eventually(func() bool { return len(s.slack.Ephemerals()) == 1 }, slackWait, slackPoll)
 
 	s.click(slackOwnerID, digestChannelID, s.listProposals()[0].ID)
 
@@ -622,7 +644,7 @@ func (s *SlackTestSuite) TestOwnerAddClickAddsBlogAndMarksIt() {
 	s.Contains(sections[0].Text.Text, slackAdded)
 	s.Require().NotNil(sections[1].Accessory)
 	s.NotContains(sections[1].Text.Text, slackAdded)
-	s.Equal(discoverReplies, s.slack.Replies())
+	s.Empty(s.slack.Replies())
 }
 
 func (s *SlackTestSuite) TestSecondAddClickAddsNoDuplicate() {
@@ -631,15 +653,15 @@ func (s *SlackTestSuite) TestSecondAddClickAddsNoDuplicate() {
 	s.setGoodFeed(good)
 	s.answerBlogs(good)
 	s.discover()
-	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	s.Require().Eventually(func() bool { return len(s.slack.Ephemerals()) == 1 }, slackWait, slackPoll)
 	proposalID := s.listProposals()[0].ID
 	s.click(slackOwnerID, digestChannelID, proposalID)
 
 	s.click(slackOwnerID, digestChannelID, proposalID)
 
 	s.Equal(2, s.CountRows("source"))
-	s.Require().Len(s.slack.Replies(), 2)
-	s.Contains(s.slack.Replies()[1], "Already in the list.")
+	s.Require().Len(s.slack.Replies(), 1)
+	s.Contains(s.slack.Replies()[0], "Already in the list.")
 }
 
 func (s *SlackTestSuite) TestAddClickOfAnotherUserIsIgnored() {
@@ -648,15 +670,14 @@ func (s *SlackTestSuite) TestAddClickOfAnotherUserIsIgnored() {
 	s.setGoodFeed(good)
 	s.answerBlogs(good)
 	s.discover()
-	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
-	discoverReplies := s.slack.Replies()
+	s.Require().Eventually(func() bool { return len(s.slack.Ephemerals()) == 1 }, slackWait, slackPoll)
 
 	s.click(slackOtherUser, digestChannelID, s.listProposals()[0].ID)
 
 	s.Equal(1, s.CountRows("source"))
 	s.Equal(string(domain.ProposalProposed), s.listProposals()[0].Status)
 	s.Empty(s.slack.Updates())
-	s.Equal(discoverReplies, s.slack.Replies())
+	s.Empty(s.slack.Replies())
 }
 
 func (s *SlackTestSuite) TestDiscoverNeverUsesCodexOSS() {
@@ -668,8 +689,8 @@ func (s *SlackTestSuite) TestDiscoverNeverUsesCodexOSS() {
 	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
 	s.Empty(s.agents.Args(llm.CodexOSS))
 	s.Empty(s.slack.Posted())
-	s.Require().Len(s.slack.Replies(), 1)
-	s.Contains(s.slack.Replies()[0], "no agent with web search answered")
+	s.Contains(ownerAnswer(s.T(), s.slack), "no agent with web search answered")
+	s.Empty(s.slack.Replies())
 }
 
 func (s *SlackTestSuite) TestAddClickInAnotherChannelIsIgnored() {
@@ -720,8 +741,10 @@ func (s *SlackTestSuite) TestDiscoverPostRejectedKeepsNoProposals() {
 
 	s.Equal(slackLooking, s.ack(s.ownerCommand("/discover", "")))
 
-	s.Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
-	s.Contains(s.slack.Replies()[0], "the channel was not found")
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	s.Equal([]string{"chat.postMessage", ephemeralCall, tests.ResponseCall}, callMethods(s.slack.Calls()))
+	s.Contains(parseSlackMessage(s.T(), s.slack.Replies()[0]).Text, "the channel was not found")
+	s.Empty(s.slack.Ephemerals())
 	s.Empty(s.slack.Posted())
 	s.Empty(s.listProposals())
 }
@@ -759,9 +782,10 @@ func (s *SlackTestSuite) TestShowThroughCommandRepliesWithOnlyTheTokenLine() {
 
 	s.Equal(slackPicking, s.ack(s.ownerCommand("/show", "")))
 
-	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	s.Require().Eventually(func() bool { return len(s.slack.Ephemerals()) == 1 }, slackWait, slackPoll)
 	s.Contains(s.slack.Posted(), slackShowHeader)
-	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineTwoClaudeRuns)
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineTwoClaudeRuns)
+	s.Empty(s.slack.Replies())
 }
 
 func (s *SlackTestSuite) TestDiscoverThroughCommandRepliesWithOnlyTheTokenLine() {
@@ -772,9 +796,10 @@ func (s *SlackTestSuite) TestDiscoverThroughCommandRepliesWithOnlyTheTokenLine()
 
 	s.discover()
 
-	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	s.Require().Eventually(func() bool { return len(s.slack.Ephemerals()) == 1 }, slackWait, slackPoll)
 	s.Require().Len(s.listProposals(), 1)
-	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineOneClaudeRun)
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineOneClaudeRun)
+	s.Empty(s.slack.Replies())
 }
 
 func (s *SlackTestSuite) TestDiscoverWithoutNewBlogsRepliesWithTheTokenLine() {
@@ -785,8 +810,7 @@ func (s *SlackTestSuite) TestDiscoverWithoutNewBlogsRepliesWithTheTokenLine() {
 
 	s.Require().NoError(err)
 	s.Equal([]string{"Found no new blogs that can be read. Try again later."}, s.slack.Posted())
-	s.Require().Len(s.slack.Replies(), 1)
-	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineOneClaudeRun)
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineOneClaudeRun)
 }
 
 func (s *SlackTestSuite) TestDiscoverWithoutBlogsRepliesWithZeroTokens() {
@@ -794,8 +818,7 @@ func (s *SlackTestSuite) TestDiscoverWithoutBlogsRepliesWithZeroTokens() {
 
 	s.Require().NoError(err)
 	s.Equal([]string{"No blogs yet. Add one with /blogs add <url>."}, s.slack.Posted())
-	s.Require().Len(s.slack.Replies(), 1)
-	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineNoCall)
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineNoCall)
 }
 
 func (s *SlackTestSuite) TestDiscoverPostFailureRepliesWithTheReasonAboveTheTokenLine() {
@@ -808,6 +831,8 @@ func (s *SlackTestSuite) TestDiscoverPostFailureRepliesWithTheReasonAboveTheToke
 	err := s.newApp(llm.Claude).Suggest.Run(s.Ctx, s.replyURL())
 
 	s.Require().Error(err)
+	s.Equal([]string{"chat.postMessage", ephemeralCall, tests.ResponseCall}, callMethods(s.slack.Calls()))
+	s.Empty(s.slack.Ephemerals())
 	s.Require().Len(s.slack.Replies(), 1)
 	requireTextThenTokenLine(s.T(), s.slack.Replies()[0], "Could not post: the channel was not found. Check SLACK_CHANNEL_ID.", tokenLineOneClaudeRun)
 }
@@ -818,8 +843,7 @@ func (s *SlackTestSuite) TestDiscoverWithoutWebAgentRepliesWithZeroTokens() {
 	err := s.newApp(llm.CodexOSS).Suggest.Run(s.Ctx, s.replyURL())
 
 	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
-	s.Require().Len(s.slack.Replies(), 1)
-	requireTextThenTokenLine(s.T(), s.slack.Replies()[0],
+	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack),
 		"Could not look for blogs: no agent with web search answered. See the logs.", tokenLineNoCall)
 }
 
@@ -965,15 +989,44 @@ func (s *SlackTestSuite) TestAddClickReplySendsNoTokenLine() {
 	s.setGoodFeed(good)
 	s.answerBlogs(good)
 	s.discover()
-	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
-	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineOneClaudeRun)
+	s.Require().Eventually(func() bool { return len(s.slack.Ephemerals()) == 1 }, slackWait, slackPoll)
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineOneClaudeRun)
 	proposalID := s.listProposals()[0].ID
 	s.click(slackOwnerID, digestChannelID, proposalID)
 
 	s.click(slackOwnerID, digestChannelID, proposalID)
 
 	replies := s.slack.Replies()
-	s.Require().Len(replies, 2)
-	s.Equal("Already in the list.", parseSlackMessage(s.T(), replies[1]).Text)
-	requireNoTokenLine(s.T(), replies[1])
+	s.Require().Len(replies, 1)
+	s.Equal("Already in the list.", parseSlackMessage(s.T(), replies[0]).Text)
+	requireNoTokenLine(s.T(), replies[0])
+}
+
+func (s *SlackTestSuite) TestDiscoverPostsTheTokenLineToTheOwnerAfterTheBlogList() {
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+
+	err := s.newApp(llm.Claude).Suggest.Run(s.Ctx, s.replyURL())
+
+	s.Require().NoError(err)
+	s.Equal([]string{"chat.postMessage", ephemeralCall}, callMethods(s.slack.Calls()))
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineOneClaudeRun)
+	s.Empty(s.slack.Replies())
+}
+
+func (s *SlackTestSuite) TestDiscoverWithoutNewBlogsPostsTheTokenLineAfterThatLine() {
+	const noNewBlogsLine = "Found no new blogs that can be read. Try again later."
+	s.insertBlogWithArticle()
+	s.answerBlogs(slackFeedPath, deadFeedPath)
+
+	err := s.newApp(llm.Claude).Suggest.Run(s.Ctx, s.replyURL())
+
+	s.Require().NoError(err)
+	s.Equal([]tests.SlackCall{
+		{Method: "chat.postMessage", Text: noNewBlogsLine},
+		{Method: ephemeralCall, Text: tokenLineOneClaudeRun},
+	}, s.slack.Calls())
+	s.Empty(s.slack.Replies())
 }
