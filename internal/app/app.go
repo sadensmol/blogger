@@ -175,6 +175,7 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 		Runs:      runs,
 		LLM:       runner,
 		Poster:    poster,
+		OwnerID:   cfg.SlackOwnerID,
 	})
 	jobs := usecase.NewJobs(usecase.JobsData{
 		Digest: usecase.NewDigest(usecase.DigestData{
@@ -189,6 +190,7 @@ func Serve(ctx context.Context, cfg config.Serve, version string) error {
 			Size:     cfg.DigestSize,
 			Location: location,
 			Now:      time.Now,
+			OwnerID:  cfg.SlackOwnerID,
 		}),
 		Discovery: usecase.NewDiscovery(usecase.DiscoveryData{
 			Sources: sources,
