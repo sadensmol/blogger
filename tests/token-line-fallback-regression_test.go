@@ -39,3 +39,21 @@ func (s *SlackTestSuite) TestBlogsAddAnswersOnlyThroughTheReplyURL() {
 	s.True(strings.HasPrefix(parseSlackMessage(s.T(), s.slack.Replies()[0]).Text, fmt.Sprintf("Added #1 %s (", blogTitle)))
 	s.Empty(s.slack.Ephemerals())
 }
+
+func (s *SlackTestSuite) TestDiscoverFailureWhoseAnswersAreBothRefusedReturnsTheRunError() {
+	s.insertBlogWithArticle()
+	good := fmt.Sprintf(goodFeedFmt, 1)
+	s.setGoodFeed(good)
+	s.answerBlogs(good)
+	s.slack.PostFaults = []tests.PostFault{tests.PostDropped}
+	s.slack.EphemeralError = notInChannelCode
+	ctx, logs := loggedContext(s.Ctx)
+
+	err := s.newApp(llm.Claude).Suggest.Run(ctx, rejectingReplyURL(s.T()))
+
+	s.Require().ErrorContains(err, "cannot suggest blogs")
+	s.NotContains(err.Error(), "cannot reply to slash command")
+	s.Equal([]string{"chat.postMessage", ephemeralCall}, callMethods(s.slack.Calls()))
+	s.Empty(s.slack.Ephemerals())
+	s.Contains(logs.String(), discoverReplyFailedLog)
+}
