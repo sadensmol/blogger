@@ -211,16 +211,16 @@ func (s *DigestTestSuite) insertPostsAgo(articleID int64, ages ...time.Duration)
 	return ids
 }
 
-func (s *DigestTestSuite) replyTexts() []string {
+func (s *DigestTestSuite) answerTexts() []string {
 	var texts []string
-	for _, raw := range s.slack.Replies() {
-		var reply struct {
-			Text string `json:"text"`
-		}
-		s.Require().NoError(json.Unmarshal([]byte(raw), &reply))
-		texts = append(texts, reply.Text)
+	for _, ephemeral := range s.slack.Ephemerals() {
+		texts = append(texts, parseSlackMessage(s.T(), ephemeral.Message).Text)
 	}
 	return texts
+}
+
+func (s *DigestTestSuite) show() error {
+	return s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
 }
 
 func (s *DigestTestSuite) postsWithoutMessage() int {
@@ -395,7 +395,8 @@ func (s *DigestTestSuite) TestShowFailureRepliesWithTheReason() {
 	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
 
 	s.Require().Error(err)
-	s.Equal([]string{notInChannelLine}, s.replyTexts())
+	s.Equal([]string{notInChannelLine}, s.answerTexts())
+	s.Empty(s.slack.Replies())
 }
 
 func (s *DigestTestSuite) TestShowWhereAllBackendsFailRepliesWithTheReason() {
@@ -407,7 +408,8 @@ func (s *DigestTestSuite) TestShowWhereAllBackendsFailRepliesWithTheReason() {
 	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
 
 	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
-	s.Equal([]string{failureLine}, s.replyTexts())
+	s.Equal([]string{failureLine}, s.answerTexts())
+	s.Empty(s.slack.Replies())
 	s.Empty(s.slack.Posted())
 }
 
@@ -420,9 +422,7 @@ func (s *DigestTestSuite) TestShowSuccessRepliesWithOnlyTheTokenLine() {
 
 	s.Require().NoError(err)
 	s.Require().Len(s.slack.Posted(), 2)
-	replies := s.slack.Replies()
-	s.Require().Len(replies, 1)
-	requireOnlyTokenLine(s.T(), replies[0], tokenLineTwoClaudeRuns)
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineTwoClaudeRuns)
 }
 
 func (s *DigestTestSuite) TestShowFailureRepliesWithTheReasonAboveTheTokenLine() {
@@ -433,9 +433,7 @@ func (s *DigestTestSuite) TestShowFailureRepliesWithTheReasonAboveTheTokenLine()
 	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
 
 	s.Require().Error(err)
-	replies := s.slack.Replies()
-	s.Require().Len(replies, 1)
-	requireTextThenTokenLine(s.T(), replies[0], notInChannelLine, tokenLineNoCall)
+	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), notInChannelLine, tokenLineNoCall)
 }
 
 func (s *DigestTestSuite) TestShowWhereEveryAttemptFailsCountsEachAttempt() {
@@ -449,9 +447,7 @@ func (s *DigestTestSuite) TestShowWhereEveryAttemptFailsCountsEachAttempt() {
 	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
 
 	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
-	replies := s.slack.Replies()
-	s.Require().Len(replies, 1)
-	requireTextThenTokenLine(s.T(), replies[0], failureLine,
+	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), failureLine,
 		"Tokens used: 106,077 (claude: 82,110 in, 252 out; codex: 23,710 in, 5 out)")
 }
 
@@ -464,9 +460,7 @@ func (s *DigestTestSuite) TestShowWhereNoAgentReportsUsageSaysUnknown() {
 	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
 
 	s.Require().ErrorIs(err, llm.ErrAllBackendsFailed)
-	replies := s.slack.Replies()
-	s.Require().Len(replies, 1)
-	requireTextThenTokenLine(s.T(), replies[0], failureLine, "Tokens used: unknown (claude: not reported; codex: not reported)")
+	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), failureLine, "Tokens used: unknown (claude: not reported; codex: not reported)")
 }
 
 func (s *DigestTestSuite) TestShowWithNothingToReadRepliesWithZeroTokens() {
@@ -477,9 +471,7 @@ func (s *DigestTestSuite) TestShowWithNothingToReadRepliesWithZeroTokens() {
 
 	s.Require().NoError(err)
 	s.Equal([]string{noUnreadLine}, s.slack.Posted())
-	replies := s.slack.Replies()
-	s.Require().Len(replies, 1)
-	requireOnlyTokenLine(s.T(), replies[0], tokenLineNoCall)
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineNoCall)
 }
 
 func (s *DigestTestSuite) TestShowWithoutBlogsRepliesWithZeroTokens() {
@@ -487,9 +479,7 @@ func (s *DigestTestSuite) TestShowWithoutBlogsRepliesWithZeroTokens() {
 
 	s.Require().NoError(err)
 	s.Equal([]string{noBlogsLine}, s.slack.Posted())
-	replies := s.slack.Replies()
-	s.Require().Len(replies, 1)
-	requireOnlyTokenLine(s.T(), replies[0], tokenLineNoCall)
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineNoCall)
 }
 
 func (s *DigestTestSuite) TestShowCountsTheProfileUpdateAndThePick() {
@@ -515,9 +505,7 @@ func (s *DigestTestSuite) TestShowCountsTheProfileUpdateAndThePick() {
 	s.True(strings.HasPrefix(args[0], updatePrompt))
 	s.True(strings.HasPrefix(args[1], tagPrompt))
 	s.True(strings.HasPrefix(args[2], pickPrompt))
-	replies := s.slack.Replies()
-	s.Require().Len(replies, 1)
-	requireOnlyTokenLine(s.T(), replies[0], "Tokens used: 123,543 (claude: 123,165 in, 378 out)")
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), "Tokens used: 123,543 (claude: 123,165 in, 378 out)")
 }
 
 func (s *DigestTestSuite) TestShowAfterMorningDigestCountsOnlyItsOwnRun() {
@@ -535,9 +523,7 @@ func (s *DigestTestSuite) TestShowAfterMorningDigestCountsOnlyItsOwnRun() {
 	s.True(strings.HasPrefix(args[0], tagPrompt))
 	s.True(strings.HasPrefix(args[1], pickPrompt))
 	s.True(strings.HasPrefix(args[2], pickPrompt))
-	replies := s.slack.Replies()
-	s.Require().Len(replies, 1)
-	requireOnlyTokenLine(s.T(), replies[0], tokenLineOneClaudeRun)
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineOneClaudeRun)
 }
 
 func (s *DigestTestSuite) TestMorningDigestSendsNoTokenLine() {
@@ -545,8 +531,7 @@ func (s *DigestTestSuite) TestMorningDigestSendsNoTokenLine() {
 	s.learnedProfile()
 	s.answerPicks("a")
 	s.Require().NoError(s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath)))
-	s.Require().Len(s.slack.Replies(), 1)
-	requireOnlyTokenLine(s.T(), s.slack.Replies()[0], tokenLineTwoClaudeRuns)
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineTwoClaudeRuns)
 	s.answerPicks("b")
 
 	err := s.digest.Run(s.Ctx, domain.RunKindDigestMorning)
@@ -560,7 +545,8 @@ func (s *DigestTestSuite) TestMorningDigestSendsNoTokenLine() {
 		s.NotContains(form.Get("text"), tokenLinePrefix)
 		s.NotContains(form.Get("blocks"), tokenLinePrefix)
 	}
-	s.Len(s.slack.Replies(), 1)
+	s.Len(s.slack.Ephemerals(), 1)
+	s.Empty(s.slack.Replies())
 }
 
 func (s *DigestTestSuite) TestNoCandidatesSkipsAgent() {
@@ -958,4 +944,47 @@ func (s *DigestTestSuite) TestVoteOnFirstPostOfRepeatedArticleEndsRepeats() {
 
 func (s *DigestTestSuite) TestVoteOnSecondPostOfRepeatedArticleEndsRepeats() {
 	s.repeatThenVoteOn(1)
+}
+
+func (s *DigestTestSuite) TestShowPostsTheTokenLineToTheOwnerAfterEveryPickAndReaction() {
+	s.addBlog("a", "b")
+	s.learnedProfile()
+	s.answerPicks("a", "b")
+
+	err := s.show()
+
+	s.Require().NoError(err)
+	s.Equal([]string{
+		"chat.postMessage",
+		"chat.postMessage", "reactions.add", "reactions.add",
+		"chat.postMessage", "reactions.add", "reactions.add",
+		ephemeralCall,
+	}, callMethods(s.slack.Calls()))
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineTwoClaudeRuns)
+	s.Empty(s.slack.Replies())
+}
+
+func (s *DigestTestSuite) TestShowWithoutBlogsPostsTheTokenLineAfterTheHint() {
+	err := s.show()
+
+	s.Require().NoError(err)
+	s.Equal([]tests.SlackCall{
+		{Method: "chat.postMessage", Text: noBlogsLine},
+		{Method: ephemeralCall, Text: tokenLineNoCall},
+	}, s.slack.Calls())
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineNoCall)
+}
+
+func (s *DigestTestSuite) TestShowWithNothingUnreadPostsTheTokenLineAfterThatLine() {
+	s.addBlog()
+	s.learnedProfile()
+
+	err := s.show()
+
+	s.Require().NoError(err)
+	s.Equal([]tests.SlackCall{
+		{Method: "chat.postMessage", Text: noUnreadLine},
+		{Method: ephemeralCall, Text: tokenLineNoCall},
+	}, s.slack.Calls())
+	requireOnlyTokenLine(s.T(), ownerAnswer(s.T(), s.slack), tokenLineNoCall)
 }

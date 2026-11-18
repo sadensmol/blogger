@@ -24,6 +24,7 @@ const (
 	HistoryWindow = 365 * 24 * time.Hour
 	RepeatAfter   = 7 * 24 * time.Hour
 	RepeatMax     = 3
+	OwnerID       = "UOWNER"
 )
 
 type AppData struct {
@@ -104,6 +105,7 @@ func NewApp(t *testing.T, d AppData) *App {
 			Size:     d.DigestSize,
 			Location: d.Location,
 			Now:      d.Now,
+			OwnerID:  OwnerID,
 		}),
 		Discovery: usecase.NewDiscovery(usecase.DiscoveryData{
 			Sources: sources,
@@ -118,6 +120,7 @@ func NewApp(t *testing.T, d AppData) *App {
 			Runs:      runs,
 			LLM:       runner,
 			Poster:    poster,
+			OwnerID:   OwnerID,
 		}),
 	}
 }
