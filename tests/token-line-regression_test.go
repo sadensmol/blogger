@@ -93,11 +93,11 @@ func (s *DigestTestSuite) TestShowFailureWhoseAnswersAreBothRefusedReturnsTheRun
 }
 
 func (s *DigestTestSuite) TestShowFailureAfterSomePostsAnswersTheOwnerAfterThem() {
-	const channelNotFoundLine = "Could not post: the channel was not found. Check SLACK_CHANNEL_ID."
+	const showFailedLine = "Could not make the digest. See the logs."
 	s.addBlog("a", "b")
 	s.learnedProfile()
 	s.answerPicks("a", "b")
-	s.slack.PostFaults = []tests.PostFault{tests.PostOK, tests.PostOK, tests.PostRejected}
+	s.slack.PostFaults = []tests.PostFault{tests.PostOK, tests.PostOK, tests.PostDropped}
 
 	err := s.show()
 
@@ -105,7 +105,8 @@ func (s *DigestTestSuite) TestShowFailureAfterSomePostsAnswersTheOwnerAfterThem(
 	s.Equal([]string{
 		"chat.postMessage", "chat.postMessage", "reactions.add", "reactions.add", "chat.postMessage", ephemeralCall,
 	}, callMethods(s.slack.Calls()))
-	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), channelNotFoundLine, tokenLineTwoClaudeRuns)
+	s.Len(s.slack.Posted(), 3)
+	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), showFailedLine, tokenLineTwoClaudeRuns)
 	s.Empty(s.slack.Replies())
 }
 
@@ -208,14 +209,14 @@ func (s *SlackTestSuite) TestDiscoverFailureAnswersTheOwnerWithTheReasonAndTheTo
 	good := fmt.Sprintf(goodFeedFmt, 1)
 	s.setGoodFeed(good)
 	s.answerBlogs(good)
-	s.slack.PostFaults = []tests.PostFault{tests.PostRejected}
+	s.slack.PostFaults = []tests.PostFault{tests.PostDropped}
 
 	err := s.newApp(llm.Claude).Suggest.Run(s.Ctx, s.replyURL())
 
 	s.Require().Error(err)
 	s.Equal([]string{"chat.postMessage", ephemeralCall}, callMethods(s.slack.Calls()))
-	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack),
-		"Could not post: the channel was not found. Check SLACK_CHANNEL_ID.", tokenLineOneClaudeRun)
+	s.Len(s.slack.Posted(), 1)
+	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), "Could not look for blogs. See the logs.", tokenLineOneClaudeRun)
 	s.Empty(s.slack.Replies())
 }
 

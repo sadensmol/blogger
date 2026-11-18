@@ -395,8 +395,10 @@ func (s *DigestTestSuite) TestShowFailureRepliesWithTheReason() {
 	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
 
 	s.Require().Error(err)
-	s.Equal([]string{notInChannelLine}, s.answerTexts())
-	s.Empty(s.slack.Replies())
+	s.Equal([]string{"chat.postMessage", ephemeralCall, tests.ResponseCall}, callMethods(s.slack.Calls()))
+	s.Empty(s.answerTexts())
+	s.Require().Len(s.slack.Replies(), 1)
+	s.Equal(notInChannelLine, parseSlackMessage(s.T(), s.slack.Replies()[0]).Text)
 }
 
 func (s *DigestTestSuite) TestShowWhereAllBackendsFailRepliesWithTheReason() {
@@ -433,7 +435,10 @@ func (s *DigestTestSuite) TestShowFailureRepliesWithTheReasonAboveTheTokenLine()
 	err := s.digest.Show(s.Ctx, fmt.Sprintf("%s%s", s.slack.URL, replyURLPath))
 
 	s.Require().Error(err)
-	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), notInChannelLine, tokenLineNoCall)
+	s.Equal([]string{"chat.postMessage", ephemeralCall, tests.ResponseCall}, callMethods(s.slack.Calls()))
+	s.Empty(s.slack.Ephemerals())
+	s.Require().Len(s.slack.Replies(), 1)
+	requireTextThenTokenLine(s.T(), s.slack.Replies()[0], notInChannelLine, tokenLineNoCall)
 }
 
 func (s *DigestTestSuite) TestShowWhereEveryAttemptFailsCountsEachAttempt() {

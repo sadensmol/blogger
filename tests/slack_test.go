@@ -409,9 +409,10 @@ func (s *SlackTestSuite) TestShowThatCannotPostRepliesWhyThroughResponseURL() {
 	text := s.ack(s.ownerCommand("/show", ""))
 
 	s.Equal(slackPicking, text)
-	s.Require().Eventually(func() bool { return len(s.slack.Ephemerals()) > 0 }, slackWait, slackPoll)
-	s.Contains(ownerAnswer(s.T(), s.slack), "the bot is not in this channel")
-	s.Empty(s.slack.Replies())
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	s.Equal([]string{"chat.postMessage", ephemeralCall, tests.ResponseCall}, callMethods(s.slack.Calls()))
+	s.Contains(parseSlackMessage(s.T(), s.slack.Replies()[0]).Text, "the bot is not in this channel")
+	s.Empty(s.slack.Ephemerals())
 	s.Empty(s.slack.Posted())
 }
 
@@ -740,9 +741,10 @@ func (s *SlackTestSuite) TestDiscoverPostRejectedKeepsNoProposals() {
 
 	s.Equal(slackLooking, s.ack(s.ownerCommand("/discover", "")))
 
-	s.Require().Eventually(func() bool { return len(s.slack.Ephemerals()) == 1 }, slackWait, slackPoll)
-	s.Contains(ownerAnswer(s.T(), s.slack), "the channel was not found")
-	s.Empty(s.slack.Replies())
+	s.Require().Eventually(func() bool { return len(s.slack.Replies()) == 1 }, slackWait, slackPoll)
+	s.Equal([]string{"chat.postMessage", ephemeralCall, tests.ResponseCall}, callMethods(s.slack.Calls()))
+	s.Contains(parseSlackMessage(s.T(), s.slack.Replies()[0]).Text, "the channel was not found")
+	s.Empty(s.slack.Ephemerals())
 	s.Empty(s.slack.Posted())
 	s.Empty(s.listProposals())
 }
@@ -829,7 +831,10 @@ func (s *SlackTestSuite) TestDiscoverPostFailureRepliesWithTheReasonAboveTheToke
 	err := s.newApp(llm.Claude).Suggest.Run(s.Ctx, s.replyURL())
 
 	s.Require().Error(err)
-	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), "Could not post: the channel was not found. Check SLACK_CHANNEL_ID.", tokenLineOneClaudeRun)
+	s.Equal([]string{"chat.postMessage", ephemeralCall, tests.ResponseCall}, callMethods(s.slack.Calls()))
+	s.Empty(s.slack.Ephemerals())
+	s.Require().Len(s.slack.Replies(), 1)
+	requireTextThenTokenLine(s.T(), s.slack.Replies()[0], "Could not post: the channel was not found. Check SLACK_CHANNEL_ID.", tokenLineOneClaudeRun)
 }
 
 func (s *SlackTestSuite) TestDiscoverWithoutWebAgentRepliesWithZeroTokens() {

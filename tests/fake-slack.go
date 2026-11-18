@@ -52,6 +52,8 @@ type FakeSlack struct {
 	calls     []SlackCall
 	counter   int
 	postCalls int
+	// channelFault is the error code of a channel-level post fault; slack refuses private messages to that channel too
+	channelFault string
 }
 
 type SlackUpdate struct {
@@ -130,11 +132,13 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.postCalls++
 		if fault == PostRejected {
+			f.channelFault = "channel_not_found"
 			f.calls = append(f.calls, SlackCall{Method: method, Text: r.PostForm.Get("text"), Error: "channel_not_found"})
 			fmt.Fprint(w, `{"ok":false,"error":"channel_not_found"}`)
 			return
 		}
 		if fault == PostNotInChannel {
+			f.channelFault = "not_in_channel"
 			f.calls = append(f.calls, SlackCall{Method: method, Text: r.PostForm.Get("text"), Error: "not_in_channel"})
 			fmt.Fprint(w, `{"ok":false,"error":"not_in_channel"}`)
 			return
@@ -145,6 +149,7 @@ func (f *FakeSlack) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.calls = append(f.calls, SlackCall{Method: method, Text: r.PostForm.Get("text")})
+		f.channelFault = ""
 		f.counter++
 		f.posted = append(f.posted, r.PostForm.Get("text"))
 		f.postForms = append(f.postForms, r.PostForm)
@@ -191,6 +196,9 @@ func (f *FakeSlack) serveEphemeral(w http.ResponseWriter, form url.Values) {
 	switch {
 	case f.EphemeralError != "":
 		refuse(f.EphemeralError)
+		return
+	case f.channelFault != "":
+		refuse(f.channelFault)
 		return
 	case form.Get("channel") == "":
 		refuse("channel_not_found")
