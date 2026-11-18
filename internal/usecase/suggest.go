@@ -28,6 +28,7 @@ type SuggestData struct {
 	Runs      *service.Runs
 	LLM       *llm.Runner
 	Poster    *slackpost.Poster
+	OwnerID   string
 }
 
 // Suggest answers /discover: it shows new blogs with add buttons and adds the one the owner clicks.
@@ -38,6 +39,7 @@ type Suggest struct {
 	runs      *service.Runs
 	llm       *llm.Runner
 	poster    *slackpost.Poster
+	ownerID   string
 }
 
 func NewSuggest(d SuggestData) *Suggest {
@@ -48,6 +50,7 @@ func NewSuggest(d SuggestData) *Suggest {
 		runs:      d.Runs,
 		llm:       d.LLM,
 		poster:    d.Poster,
+		ownerID:   d.OwnerID,
 	}
 }
 

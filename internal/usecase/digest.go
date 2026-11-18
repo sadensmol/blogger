@@ -43,6 +43,7 @@ type DigestData struct {
 	Size     int
 	Location *time.Location
 	Now      func() time.Time
+	OwnerID  string
 }
 
 type Digest struct {
@@ -57,6 +58,7 @@ type Digest struct {
 	size     int
 	location *time.Location
 	now      func() time.Time
+	ownerID  string
 }
 
 func NewDigest(d DigestData) *Digest {
@@ -72,6 +74,7 @@ func NewDigest(d DigestData) *Digest {
 		size:     d.Size,
 		location: d.Location,
 		now:      d.Now,
+		ownerID:  d.OwnerID,
 	}
 }
 

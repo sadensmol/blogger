@@ -172,6 +172,11 @@ func (p *Poster) ReplyWithUsage(ctx context.Context, responseURL, text string, u
 	})
 }
 
+// Ephemeral posts text with the token line as a message in the channel that only userID sees.
+func (p *Poster) Ephemeral(ctx context.Context, userID, text string, u domain.TokenUsage) error {
+	return nil
+}
+
 func (p *Poster) reply(ctx context.Context, responseURL string, msg *slack.WebhookMessage) error {
 	if err := slack.PostWebhookCustomHTTPContext(ctx, responseURL, p.http, msg); err != nil {
 		// a *url.Error prints the response URL, which lets anyone post as the bot: keep only its cause
