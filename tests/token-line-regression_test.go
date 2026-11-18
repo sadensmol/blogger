@@ -93,17 +93,19 @@ func (s *DigestTestSuite) TestShowFailureWhoseAnswersAreBothRefusedReturnsTheRun
 }
 
 func (s *DigestTestSuite) TestShowFailureAfterSomePostsAnswersTheOwnerAfterThem() {
-	const reactionFailedLine = "Could not post to Slack: fake_failure."
-	s.addBlog("a")
+	const channelNotFoundLine = "Could not post: the channel was not found. Check SLACK_CHANNEL_ID."
+	s.addBlog("a", "b")
 	s.learnedProfile()
-	s.answerPicks("a")
-	s.slack.FailMethod = "reactions.add"
+	s.answerPicks("a", "b")
+	s.slack.PostFaults = []tests.PostFault{tests.PostOK, tests.PostOK, tests.PostRejected}
 
 	err := s.show()
 
 	s.Require().Error(err)
-	s.Equal([]string{"chat.postMessage", "chat.postMessage", ephemeralCall}, callMethods(s.slack.Calls()))
-	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), reactionFailedLine, tokenLineTwoClaudeRuns)
+	s.Equal([]string{
+		"chat.postMessage", "chat.postMessage", "reactions.add", "reactions.add", "chat.postMessage", ephemeralCall,
+	}, callMethods(s.slack.Calls()))
+	requireTextThenTokenLine(s.T(), ownerAnswer(s.T(), s.slack), channelNotFoundLine, tokenLineTwoClaudeRuns)
 	s.Empty(s.slack.Replies())
 }
 
