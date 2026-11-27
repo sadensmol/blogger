@@ -337,9 +337,10 @@ func (s *BlogsListTestSuite) moritzPlassnigIndex() int {
 }
 
 func earlierBlogs() []blogsListEntry {
-	return slices.DeleteFunc(slices.Concat(oldBlogs, newBlogs), func(blog blogsListEntry) bool {
+	moritz := slices.IndexFunc(newBlogs, func(blog blogsListEntry) bool {
 		return blog.URL == moritzPlassnigPage
 	})
+	return slices.Concat(oldBlogs, newBlogs[:moritz])
 }
 
 func (s *BlogsListTestSuite) TestBlogsListHoldsMoritzPlassnigOnce() {
