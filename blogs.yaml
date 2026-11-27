@@ -299,6 +299,9 @@ sources:
   - url: https://aws.amazon.com/new
     feed: https://aws.amazon.com/about-aws/whats-new/recent/feed/
     title: "AWS What's New"
+  - url: https://moritzplassnig.com
+    feed: https://moritzplassnig.com/rss/
+    title: Moritz Plassnig
 
 # Same feed as https://stripe.dev/blog (https://stripe.dev/blog/feed), so not listed twice:
 #   https://stripe.dev/blog/topic/engineering
