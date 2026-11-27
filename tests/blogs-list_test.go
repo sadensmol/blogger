@@ -26,6 +26,12 @@ const (
 	blogsListPath = "../blogs.yaml"
 	// AWS What's New shares its host with the old AWS News Blog entry, but it is its own blog (PLAN.md D2).
 	awsWhatsNewPage = domain.URL("https://aws.amazon.com/new")
+
+	moritzPlassnigPage  = "https://moritzplassnig.com"
+	moritzPlassnigFeed  = "https://moritzplassnig.com/rss/"
+	moritzPlassnigTitle = "Moritz Plassnig"
+	// the import prints urls as domain.ParseURL normalizes them: a root path gets "/", a trailing "/" is dropped.
+	moritzPlassnigAdd = "+ add     https://moritzplassnig.com/ (feed https://moritzplassnig.com/rss)\n"
 )
 
 type blogsListFile struct {
@@ -308,6 +314,80 @@ func (s *BlogsListTestSuite) TestBlogsListHasNoPageOrFeedTwice() {
 	s.Empty(twice)
 }
 
+func (s *BlogsListTestSuite) moritzPlassnigEntries() []blogsListEntry {
+	page := s.parse(moritzPlassnigPage)
+	var found []blogsListEntry
+	for _, entry := range s.entries {
+		if s.parse(entry.URL).SameSiteAs(page) {
+			found = append(found, entry)
+		}
+	}
+	return found
+}
+
+func (s *BlogsListTestSuite) TestBlogsListHoldsMoritzPlassnigOnce() {
+	found := s.moritzPlassnigEntries()
+
+	s.Require().Len(found, 1, "the list must hold exactly one entry on the host of moritzplassnig.com")
+	s.Equal(blogsListEntry{URL: moritzPlassnigPage, Feed: moritzPlassnigFeed, Title: moritzPlassnigTitle}, found[0])
+}
+
+func (s *BlogsListTestSuite) TestBlogsListKeepsEveryEarlierEntryNextToMoritzPlassnig() {
+	earlier := slices.Concat(oldBlogs, newBlogs)
+
+	s.Require().Equal(len(earlier)+1, len(s.entries), "the list must hold every earlier entry plus one entry for Moritz Plassnig")
+	byPage := make(map[domain.URL]blogsListEntry, len(s.entries))
+	for _, entry := range s.entries {
+		byPage[s.parse(entry.URL)] = entry
+	}
+	for _, want := range earlier {
+		got, ok := byPage[s.parse(want.URL)]
+		if s.Truef(ok, "the earlier entry %s is gone", want.URL) {
+			s.Equal(want, got)
+		}
+	}
+}
+
+func (s *BlogsListTestSuite) TestBlogsListAppendsMoritzPlassnigAfterTheEarlierEntriesInOrder() {
+	earlier := slices.Concat(oldBlogs, newBlogs)
+
+	s.Require().Equal(len(earlier)+1, len(s.entries), "the list must hold every earlier entry plus one entry for Moritz Plassnig")
+	for i, want := range earlier {
+		s.Equalf(want.URL, s.entries[i].URL, "entry %d moved", i+1)
+	}
+	s.Equal(moritzPlassnigPage, s.entries[len(earlier)].URL)
+}
+
+func (s *BlogsListTestSuite) TestBlogsListGivesMoritzPlassnigNoPageOrFeedOfAnotherEntry() {
+	s.Require().Len(s.moritzPlassnigEntries(), 1, "the list must hold exactly one entry on the host of moritzplassnig.com")
+	page, feed := s.parse(moritzPlassnigPage), s.parse(moritzPlassnigFeed)
+
+	for _, entry := range s.entries {
+		other := s.parse(entry.URL)
+		if other.SameSiteAs(page) {
+			continue
+		}
+		s.NotEqualf(page, other, "%s is the page of another entry", page)
+		if entry.Feed != "" {
+			s.NotEqualf(feed, s.parse(entry.Feed), "%s is the feed of the entry %s", feed, other)
+		}
+	}
+}
+
+func (s *BlogsListTestSuite) TestBlogsListWithMoritzPlassnigIsAValidStrictImportFile() {
+	s.Require().Len(s.moritzPlassnigEntries(), 1, "the list must hold exactly one entry on the host of moritzplassnig.com")
+
+	for i, entry := range s.entries {
+		s.NotEmptyf(entry.URL, "entry %d has no url", i+1)
+		_, err := domain.ParseURL(entry.URL)
+		s.NoErrorf(err, "entry %d url", i+1)
+		if entry.Feed != "" {
+			_, err := domain.ParseURL(entry.Feed)
+			s.NoErrorf(err, "entry %d feed", i+1)
+		}
+	}
+}
+
 type BlogsListImportTestSuite struct {
 	tests.Suite
 
@@ -380,6 +460,35 @@ func (s *BlogsListImportTestSuite) TestImportDryRunOfBlogsListAddsOnlyTheNewBlog
 		s.Require().NoError(err)
 		s.Contains(out.String(), fmt.Sprintf("+ add     %s (feed %s)\n", page, newFeed))
 	}
+	s.Equal(len(board), s.CountRows("source"))
+}
+
+func (s *BlogsListImportTestSuite) TestImportDryRunOntoEveryEarlierBlogAddsOnlyMoritzPlassnig() {
+	board := slices.Concat(oldBlogs, newBlogs)
+	for _, blog := range board {
+		page, err := domain.ParseURL(blog.URL)
+		s.Require().NoError(err)
+		var blogFeed domain.URL
+		if blog.Feed != "" {
+			blogFeed, err = domain.ParseURL(blog.Feed)
+			s.Require().NoError(err)
+		}
+		_, err = s.sources.Insert(s.Ctx, testsrepository.SourceRow{
+			SiteURL: string(page), FeedURL: string(blogFeed), Title: blog.Title, Status: string(domain.SourceActive),
+		}, s.Clock.Now())
+		s.Require().NoError(err)
+	}
+
+	var out bytes.Buffer
+	err := controllercli.Sources(s.Ctx, controllercli.SourcesData{
+		Svc: s.svc, Args: []string{"import", blogsListPath}, Out: &out,
+	})
+
+	s.Require().NoError(err)
+	s.Contains(out.String(), moritzPlassnigAdd)
+	s.Equal(1, strings.Count(out.String(), "+ add "), out.String())
+	s.NotContains(out.String(), "~ change")
+	s.NotContains(out.String(), "- remove")
 	s.Equal(len(board), s.CountRows("source"))
 }
 
