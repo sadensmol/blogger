@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"go.yaml.in/yaml/v3"
 
@@ -26,6 +27,12 @@ const (
 	blogsListPath = "../blogs.yaml"
 	// AWS What's New shares its host with the old AWS News Blog entry, but it is its own blog (PLAN.md D2).
 	awsWhatsNewPage = domain.URL("https://aws.amazon.com/new")
+
+	moritzPlassnigPage  = "https://moritzplassnig.com"
+	moritzPlassnigFeed  = "https://moritzplassnig.com/rss/"
+	moritzPlassnigTitle = "Moritz Plassnig"
+	// the import prints urls as domain.ParseURL normalizes them: a root path gets "/", a trailing "/" is dropped.
+	moritzPlassnigAdd = "+ add     https://moritzplassnig.com/ (feed https://moritzplassnig.com/rss)"
 )
 
 type blogsListFile struct {
@@ -174,18 +181,22 @@ func TestBlogsListTestSuite(t *testing.T) {
 	suite.Run(t, &BlogsListTestSuite{})
 }
 
-func (s *BlogsListTestSuite) SetupTest() {
+func readBlogsList(r *require.Assertions) []blogsListEntry {
 	f, err := os.Open(blogsListPath)
-	s.Require().NoError(err)
+	r.NoError(err)
 	defer func() {
-		s.Require().NoError(f.Close())
+		r.NoError(f.Close())
 	}()
 
 	decoder := yaml.NewDecoder(f)
 	decoder.KnownFields(true)
 	var file blogsListFile
-	s.Require().NoError(decoder.Decode(&file))
-	s.entries = file.Sources
+	r.NoError(decoder.Decode(&file))
+	return file.Sources
+}
+
+func (s *BlogsListTestSuite) SetupTest() {
+	s.entries = readBlogsList(s.Require())
 }
 
 func (s *BlogsListTestSuite) parse(raw string) domain.URL {
@@ -272,6 +283,10 @@ func (s *BlogsListTestSuite) TestBlogsListAddsNoSecondEntryForAKnownBlog() {
 func (s *BlogsListTestSuite) TestBlogsListIsAValidImportFile() {
 	s.requireEveryNewBlog()
 
+	s.assertEveryURLParses()
+}
+
+func (s *BlogsListTestSuite) assertEveryURLParses() {
 	for i, entry := range s.entries {
 		s.NotEmptyf(entry.URL, "entry %d has no url", i+1)
 		_, err := domain.ParseURL(entry.URL)
@@ -309,6 +324,81 @@ func (s *BlogsListTestSuite) TestBlogsListHasNoPageOrFeedTwice() {
 	s.Empty(twice)
 }
 
+func (s *BlogsListTestSuite) moritzPlassnigIndex() int {
+	page := s.parse(moritzPlassnigPage)
+	var found []int
+	for i, entry := range s.entries {
+		if s.parse(entry.URL).SameSiteAs(page) {
+			found = append(found, i)
+		}
+	}
+	s.Require().Len(found, 1, "the list must hold exactly one entry on the host of moritzplassnig.com")
+	return found[0]
+}
+
+func earlierBlogs() []blogsListEntry {
+	return slices.DeleteFunc(slices.Concat(oldBlogs, newBlogs), func(blog blogsListEntry) bool {
+		return blog.URL == moritzPlassnigPage
+	})
+}
+
+func (s *BlogsListTestSuite) TestBlogsListHoldsMoritzPlassnigOnce() {
+	i := s.moritzPlassnigIndex()
+
+	s.Equal(blogsListEntry{URL: moritzPlassnigPage, Feed: moritzPlassnigFeed, Title: moritzPlassnigTitle}, s.entries[i])
+}
+
+func (s *BlogsListTestSuite) TestBlogsListKeepsEveryEarlierEntryNextToMoritzPlassnig() {
+	s.moritzPlassnigIndex()
+
+	byPage := make(map[domain.URL]blogsListEntry, len(s.entries))
+	for _, entry := range s.entries {
+		byPage[s.parse(entry.URL)] = entry
+	}
+	for _, want := range earlierBlogs() {
+		got, ok := byPage[s.parse(want.URL)]
+		if s.Truef(ok, "the earlier entry %s is gone", want.URL) {
+			s.Equal(want, got)
+		}
+	}
+}
+
+func (s *BlogsListTestSuite) TestBlogsListAppendsMoritzPlassnigAfterTheEarlierEntriesInOrder() {
+	moritz := s.moritzPlassnigIndex()
+
+	position := make(map[domain.URL]int, len(s.entries))
+	for i, entry := range s.entries {
+		position[s.parse(entry.URL)] = i
+	}
+	previous := -1
+	for _, want := range earlierBlogs() {
+		i, ok := position[s.parse(want.URL)]
+		s.Require().Truef(ok, "the earlier entry %s is gone", want.URL)
+		s.Greaterf(i, previous, "the earlier entry %s moved", want.URL)
+		previous = i
+	}
+	s.Greater(moritz, previous, "Moritz Plassnig must come after every earlier entry")
+}
+
+func (s *BlogsListTestSuite) TestBlogsListGivesMoritzPlassnigNoPageOrFeedOfAnotherEntry() {
+	moritz := s.moritzPlassnigIndex()
+	page, feed := s.parse(moritzPlassnigPage), s.parse(moritzPlassnigFeed)
+
+	for i, entry := range s.entries {
+		if i == moritz {
+			continue
+		}
+		s.NotEqualf(page, s.parse(entry.URL), "entry %d has the page of Moritz Plassnig", i+1)
+		s.NotEqualf(feed, s.parse(entry.Feed), "entry %d has the feed of Moritz Plassnig", i+1)
+	}
+}
+
+func (s *BlogsListTestSuite) TestBlogsListWithMoritzPlassnigIsAValidStrictImportFile() {
+	s.moritzPlassnigIndex()
+
+	s.assertEveryURLParses()
+}
+
 type BlogsListImportTestSuite struct {
 	tests.Suite
 
@@ -327,31 +417,7 @@ func (s *BlogsListImportTestSuite) SetupTest() {
 	s.svc = service.NewSource(repository.NewSource(s.DB), feed.NewClient(time.Nanosecond), s.Clock.Now)
 }
 
-func (s *BlogsListImportTestSuite) TestImportDryRunOfBlogsListAddsOnlyTheNewBlogs() {
-	f, err := os.Open(blogsListPath)
-	s.Require().NoError(err)
-	defer func() {
-		s.Require().NoError(f.Close())
-	}()
-	decoder := yaml.NewDecoder(f)
-	decoder.KnownFields(true)
-	var file blogsListFile
-	s.Require().NoError(decoder.Decode(&file))
-
-	listed := make(map[domain.URL]bool, len(oldBlogs)+len(newBlogs))
-	for _, blog := range slices.Concat(oldBlogs, newBlogs) {
-		page, err := domain.ParseURL(blog.URL)
-		s.Require().NoError(err)
-		listed[page] = true
-	}
-	board := slices.Clone(oldBlogs)
-	for _, entry := range file.Sources {
-		page, err := domain.ParseURL(entry.URL)
-		s.Require().NoError(err)
-		if !listed[page] {
-			board = append(board, entry)
-		}
-	}
+func (s *BlogsListImportTestSuite) insertSources(board []blogsListEntry) {
 	for _, blog := range board {
 		page, err := domain.ParseURL(blog.URL)
 		s.Require().NoError(err)
@@ -365,22 +431,69 @@ func (s *BlogsListImportTestSuite) TestImportDryRunOfBlogsListAddsOnlyTheNewBlog
 		}, s.Clock.Now())
 		s.Require().NoError(err)
 	}
+}
 
+func (s *BlogsListImportTestSuite) dryRunImport() string {
 	var out bytes.Buffer
-	err = controllercli.Sources(s.Ctx, controllercli.SourcesData{
+	err := controllercli.Sources(s.Ctx, controllercli.SourcesData{
 		Svc: s.svc, Args: []string{"import", blogsListPath}, Out: &out,
 	})
-
 	s.Require().NoError(err)
-	s.NotContains(out.String(), "~ change")
-	s.NotContains(out.String(), "- remove")
+	return out.String()
+}
+
+func (s *BlogsListImportTestSuite) TestImportDryRunOfBlogsListAddsOnlyTheNewBlogs() {
+	listed := make(map[domain.URL]bool, len(oldBlogs)+len(newBlogs))
+	for _, blog := range slices.Concat(oldBlogs, newBlogs) {
+		page, err := domain.ParseURL(blog.URL)
+		s.Require().NoError(err)
+		listed[page] = true
+	}
+	board := slices.Clone(oldBlogs)
+	for _, entry := range readBlogsList(s.Require()) {
+		page, err := domain.ParseURL(entry.URL)
+		s.Require().NoError(err)
+		if !listed[page] {
+			board = append(board, entry)
+		}
+	}
+	s.insertSources(board)
+
+	out := s.dryRunImport()
+
+	s.NotContains(out, "~ change")
+	s.NotContains(out, "- remove")
 	for _, want := range newBlogs {
 		page, err := domain.ParseURL(want.URL)
 		s.Require().NoError(err)
 		newFeed, err := domain.ParseURL(want.Feed)
 		s.Require().NoError(err)
-		s.Contains(out.String(), fmt.Sprintf("+ add     %s (feed %s)\n", page, newFeed))
+		s.Contains(out, fmt.Sprintf("+ add     %s (feed %s)\n", page, newFeed))
 	}
+	s.Equal(len(board), s.CountRows("source"))
+}
+
+func (s *BlogsListImportTestSuite) TestImportDryRunOntoEveryEarlierBlogAddsOnlyMoritzPlassnig() {
+	moritz, err := domain.ParseURL(moritzPlassnigPage)
+	s.Require().NoError(err)
+	board := slices.DeleteFunc(readBlogsList(s.Require()), func(entry blogsListEntry) bool {
+		page, err := domain.ParseURL(entry.URL)
+		s.Require().NoError(err)
+		return page.SameSiteAs(moritz)
+	})
+	s.insertSources(board)
+
+	out := s.dryRunImport()
+
+	var adds []string
+	for line := range strings.Lines(out) {
+		if strings.HasPrefix(line, "+ add ") {
+			adds = append(adds, strings.TrimSuffix(line, "\n"))
+		}
+	}
+	s.Equal([]string{moritzPlassnigAdd}, adds, out)
+	s.NotContains(out, "~ change")
+	s.NotContains(out, "- remove")
 	s.Equal(len(board), s.CountRows("source"))
 }
 
